@@ -14,21 +14,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 
 private val lightColors = lightColorScheme(
-    primary = Color(0xFF086B69),
+    primary = AkulaPalette.Ocean,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFD4F2EE),
-    onPrimaryContainer = Color(0xFF094F4E),
-    background = Color(0xFFF5F8F7),
+    primaryContainer = AkulaPalette.SeaGlass,
+    onPrimaryContainer = Color(0xFF0B5770),
+    background = Color(0xFFF6F9FC),
     surface = Color.White,
 )
 
 private val darkColors = darkColorScheme(
-    primary = Color(0xFF78DDD1),
+    primary = Color(0xFF78CFE9),
     onPrimary = Color(0xFF0C3938),
-    primaryContainer = Color(0xFF164B4A),
-    onPrimaryContainer = Color(0xFFD2F5EF),
-    background = Color(0xFF101819),
-    surface = Color(0xFF1B2526),
+    primaryContainer = Color(0xFF1C4455),
+    onPrimaryContainer = Color(0xFFDAF3FF),
+    background = Color(0xFF101B25),
+    surface = Color(0xFF172A35),
 )
 
 class MainActivity : ComponentActivity() {
