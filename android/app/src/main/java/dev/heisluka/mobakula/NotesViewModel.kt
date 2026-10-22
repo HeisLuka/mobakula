@@ -1,6 +1,7 @@
 package dev.heisluka.mobakula
 
 import android.app.Application
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -74,6 +75,25 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         opened = note
         draft = note.content
         info = null
+    }
+
+    fun importFile(uri: Uri) = task {
+        val created = repository.importFile(uri)
+        opened = created
+        draft = created.content
+        headers = repository.list()
+        info = "Файл импортирован как отдельная заметка Акулы"
+    }
+
+    fun exportFile(uri: Uri) = task {
+        val current = opened ?: return@task
+        if (dirty) throw NoteFailure("unsaved", "Перед экспортом сохраните изменения.")
+        val result = repository.exportFile(current, uri)
+        info = if (result == ExportStatus.VERIFIED) {
+            "Файл записан и проверен повторным чтением"
+        } else {
+            "Экспорт записан, но проверка чтением недоступна. Проверьте файл вручную."
+        }
     }
 
     fun update(text: String) {

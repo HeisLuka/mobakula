@@ -43,7 +43,7 @@ private fun MobileHome() {
         )
         NotesScreen(modifier = Modifier.weight(1f))
         Text(
-            "Синхронизация и сервер появятся после испытаний локальной версии.",
+            "Пробная сборка: удаление приложения удаляет заметки. Сохраните копии .md перед переустановкой.",
             style = MaterialTheme.typography.bodySmall,
         )
     }

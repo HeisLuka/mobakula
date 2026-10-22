@@ -1,6 +1,8 @@
 package dev.heisluka.mobakula
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,6 +28,14 @@ fun NotesScreen(
     state: NotesViewModel = viewModel(),
 ) {
     BackHandler(enabled = state.opened != null) { state.back() }
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) state.importFile(uri)
+    }
+    val exportPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/markdown"),
+    ) { uri ->
+        if (uri != null) state.exportFile(uri)
+    }
     Column(modifier = modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         state.error?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
@@ -44,6 +54,10 @@ fun NotesScreen(
                     Text("Обновить")
                 }
             }
+            OutlinedButton(
+                onClick = { importPicker.launch(arrayOf("text/*", "application/octet-stream")) },
+                enabled = !state.busy,
+            ) { Text("Импортировать .md или .txt") }
             if (state.headers.isEmpty() && !state.busy && state.error == null) {
                 Text("Заметок пока нет. Создайте первую.")
             }
@@ -85,6 +99,10 @@ fun NotesScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+            OutlinedButton(
+                onClick = { exportPicker.launch("akula-" + opened.id + ".md") },
+                enabled = !state.busy && !state.dirty,
+            ) { Text("Экспортировать .md") }
         }
     }
 }
