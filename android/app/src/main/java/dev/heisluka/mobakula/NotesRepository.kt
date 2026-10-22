@@ -1,6 +1,7 @@
 package dev.heisluka.mobakula
 
 import android.content.Context
+import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -14,6 +15,7 @@ class NoteFailure(val code: String, details: String) : Exception("$code: $detail
 /** Android transport only: all note reads/writes are implemented by Akula Rust. */
 class NotesRepository(context: Context) {
     private val appDataRoot = context.filesDir.absolutePath
+    private val resolver = context.contentResolver
 
     private fun request(arguments: JSONObject): Any {
         val raw = NativeBridge.request(arguments.toString())
@@ -46,12 +48,31 @@ class NotesRepository(context: Context) {
         }
     }
 
-    suspend fun create(): NoteDocument = withContext(Dispatchers.IO) {
+    private fun createRaw(content: String): NoteDocument {
         val response = request(
-            JSONObject().put("action", "create").put("content", "# Новая заметка\n"),
+            JSONObject().put("action", "create").put("content", content),
         ) as JSONObject
-        note(response)
+        return note(response)
     }
+
+    suspend fun create(): NoteDocument = withContext(Dispatchers.IO) {
+        createRaw("# Новая заметка\n")
+    }
+
+    suspend fun importFile(uri: Uri): NoteDocument = withContext(Dispatchers.IO) {
+        createRaw(importNoteText(resolver, uri))
+    }
+
+    suspend fun exportFile(expected: NoteDocument, uri: Uri): ExportStatus =
+        withContext(Dispatchers.IO) {
+            val current = note(
+                request(JSONObject().put("action", "read").put("id", expected.id)) as JSONObject,
+            )
+            if (current.hash != expected.hash) {
+                throw NoteFailure("conflict", "Заметка изменилась. Откройте её заново.")
+            }
+            exportNoteText(resolver, uri, current.content)
+        }
 
     suspend fun read(id: String): NoteDocument = withContext(Dispatchers.IO) {
         note(request(JSONObject().put("action", "read").put("id", id)) as JSONObject)
