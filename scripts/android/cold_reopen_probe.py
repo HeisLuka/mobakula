@@ -42,19 +42,20 @@ def main() -> int:
             if "package:" not in run("shell", "pm", "path", package, timeout=30):
                 raise RuntimeError(f"{package} not installed: install matching app/androidTest APKs first")
 
-        def stage(phase: str, test_method: str) -> None:
+        def stage(phase: str, test_method: str, receipt: str) -> None:
             output = run(
                 "shell", "am", "instrument", "-w",
                 "-e", "class", CLASS + "#" + test_method,
                 "-e", "akula_cold_phase", phase, RUNNER,
             )
-            if "OK (1 test)" not in output:
-                raise RuntimeError(f"{phase} did not pass exactly one test:\n{output[-3500:]}")
+            if "OK (1 test)" not in output or ("akula_cold_check=" + receipt) not in output:
+                raise RuntimeError(f"{phase} missing PASS or phase evidence:\n{output[-3500:]}")
             print(f"PASS: {phase}")
 
-        stage("prepare", "prepareVerifiedFileBeforeColdStop")
         run("shell", "am", "force-stop", APP, timeout=30)
-        stage("verify", "verifySavedFileFromGenuinelyNewAndroidProcess")
+        stage("prepare", "prepareVerifiedFileBeforeColdStop", "prepared")
+        run("shell", "am", "force-stop", APP, timeout=30)
+        stage("verify", "verifySavedFileFromGenuinelyNewAndroidProcess", "verified")
         print("PASS: previously saved bytes, BLAKE3 revision, list and stale-hash rejection survived a cold process restart")
         return 0
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as cause:
