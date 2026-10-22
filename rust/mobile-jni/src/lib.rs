@@ -76,7 +76,8 @@ fn handle(raw: &str) -> String {
     match result {
         Ok(Ok(data)) => json!({ "ok": true, "data": data }).to_string(),
         Ok(Err(cause)) =>
-            json!({ "ok": false, "code": cause.code, "message": cause.message }).to_string(),
+            json!({ "ok": false, "code": cause.code, "message": cause.message,
+                "note_id": cause.note_id }).to_string(),
         Err(_) =>
             json!({ "ok": false, "code": "panic", "message": "Native operation failed; restart app" })
                 .to_string(),
