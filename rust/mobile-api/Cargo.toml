@@ -7,3 +7,6 @@ publish = false
 [lib]
 name = "mobakula_mobile_api"
 path = "src/lib.rs"
+
+[dependencies]
+aquilum-core = { git = "https://github.com/Lalalalendia/Akula", rev = "d4487a78083150924a7a8b8ea85693d931041960", default-features = false }
