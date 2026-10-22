@@ -303,8 +303,10 @@ private fun NotesEditor(
                 Text("Сохранить")
             }
         }
-        Text(title, style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (!keyboardVisible) {
+            Text(title, style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
         Text(state.saveStatus,
             color = if (state.dirty || state.needsReview) MaterialTheme.colorScheme.error
                 else MaterialTheme.colorScheme.onSurfaceVariant,
