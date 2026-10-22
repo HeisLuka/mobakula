@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
@@ -163,7 +164,7 @@ private fun NotesOverview(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium)
             }
-            Button(onClick = state::create, enabled = !state.busy) { Text("+ Создать") }
+            Button(onClick = state::create, enabled = !state.busy && state.pendingCreateId == null) { Text("+ Создать") }
         }
 
         OutlinedTextField(
@@ -175,8 +176,19 @@ private fun NotesOverview(
             shape = RoundedCornerShape(16.dp),
         )
 
-        TextButton(onClick = onImport, enabled = !state.busy) {
+        TextButton(onClick = onImport, enabled = !state.busy && state.pendingCreateId == null) {
             Text("Импортировать Markdown или TXT")
+        }
+        if (state.pendingCreateId != null) {
+            Text(
+                "Предыдущее создание завершилось неоднозначно. Проверьте существующий файл, " +
+                    "не повторяйте создание: история ещё не подтверждена.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            TextButton(onClick = state::inspectPendingCreate, enabled = !state.busy) {
+                Text("Открыть существующую заметку")
+            }
         }
 
         if (notes.isEmpty() && !state.busy) {
@@ -239,10 +251,14 @@ private fun NotesEditor(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack, enabled = !state.busy) { Text("← К заметкам") }
-            Text(if (state.dirty) "Не сохранено" else "Сохранено",
-                style = MaterialTheme.typography.labelMedium,
-                color = if (state.dirty) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.primary)
+            Text(
+                state.saveStatus,
+                modifier = Modifier.weight(1f),
+                textAlign = TextAlign.End,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (state.dirty || state.needsReview) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         OutlinedTextField(
@@ -258,7 +274,7 @@ private fun NotesEditor(
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = state::save, enabled = !state.busy && state.dirty) {
+            Button(onClick = state::save, enabled = !state.busy && state.canSave) {
                 Text("Сохранить")
             }
             OutlinedButton(onClick = state::discard, enabled = !state.busy && state.dirty) {
