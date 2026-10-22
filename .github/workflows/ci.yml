@@ -31,7 +31,46 @@ jobs:
         run: python3 scripts/ci/policy.py
       - name: Run policy regression tests
         run: python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
-      - name: Next Android/Rust builds
+      - name: Detect Android changes
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        shell: bash
         run: |
-          echo "Bootstrap phase: no Android project or Rust mobile crate committed yet."
-          echo "Future PR must add scoped build steps before claiming compilation success."
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" || ! "${BASE_SHA}" =~ ^[a-f0-9]{40}$ || "${BASE_SHA}" == "0000000000000000000000000000000000000000" ]]; then
+            echo "android=true" >> "${GITHUB_OUTPUT}"
+          elif git diff --name-only "${BASE_SHA}...HEAD" | grep -Eq '^(android/|\.github/workflows/ci\.yml$|scripts/ci/)'; then
+            echo "android=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "android=false" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Set up JDK
+        if: steps.scope.outputs.android == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle
+        if: steps.scope.outputs.android == 'true'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+      - name: Set up Android SDK
+        if: steps.scope.outputs.android == 'true'
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android API 37.0
+        if: steps.scope.outputs.android == 'true'
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+      - name: Compile debug Android APK
+        if: steps.scope.outputs.android == 'true'
+        run: gradle --no-daemon -p android :app:assembleDebug :app:testDebugUnitTest
+      - name: Upload debug APK
+        if: steps.scope.outputs.android == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobakula-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
