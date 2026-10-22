@@ -18,3 +18,5 @@ pub fn file_gate_contract() -> &'static str {
     let _ = std::mem::size_of::<aquilum_core::Core>();
     "aquilum-core-file-gate"
 }
+
+pub mod notes;
