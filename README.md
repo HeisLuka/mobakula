@@ -36,3 +36,7 @@ Android note persistence will use the *real* Akula File Gate and HistoryService,
 ## M1 local notes
 
 The Android app now has a note list/editor with explicit Save, revision conflict errors and no network permissions. Rust NoteVault reuses **Akula File Gate + HistoryService** through JNI. Compilation is not physical-device acceptance. See [M1 acceptance and limitations](docs/m1-acceptance.md).
+
+## Safe testing across APK updates
+
+GitHub CI's ordinary `mobakula-debug` APK uses an ephemeral debug signer and is **not guaranteed to update an already installed app** without data loss. After owner-only signing setup, use the **manual** [Sign device-test APK](.github/workflows/device-test-sign.yml) action on `main` to re-sign a green `Mobile gate` artifact with a constant test key and a run-number-based increasing `versionCode`. Never uninstall a data-bearing APK as an update workaround. See [device-test signing steps and limitations](docs/device-test-signing.md).

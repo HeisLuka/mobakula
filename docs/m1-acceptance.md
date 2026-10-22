@@ -53,3 +53,10 @@
 - Each phase must return exactly `OK (1 test)`. The normal instrumented suite skips both test stages without the explicit `akula_cold_phase` argument, so it cannot accidentally claim a cold restart from an in-process test.
 - The workflow's manual opt-in `android_runtime=true` now runs the standard Android JNI smoke followed by this two-phase check on an API 35 x86_64 emulator. Ordinary PR/push CI only **compiles** the instrumentation APK; it does not prove process restart.
 - This tests saved-note recovery only. Unsaved text before the debounce or a lost post-write acknowledgment, Android upgrade signing, and power-loss durability remain outside this probe. Physical handset PASS must be recorded separately.
+
+## Signed update acceptance (manual)
+
+- Normal CI debug APKs still use runner-specific ephemeral debug identities. Never uninstall the app to overcome a signer mismatch if notes matter.
+- A manually signed test APK uses a fixed certificate **only after** environment secrets and the approved cert fingerprint are configured. Every new `main` push `Mobile gate` build gets increasing `versionCode` from the Actions run number.
+- Test on a clean device: install device-test signed build A, create and verify a note, then install a newer **device-test signed** build B *without uninstalling*. Confirm the applicationId/certificate match and the versionCode of B exceeds A. Reopen original note in airplane mode; compare its exact content and history. An install error is a stop condition: export data, do not uninstall.
+- A device-test signer is **not** Google Play/RuStore production signer. Store migration might require explicit export/import; do not promise seamless cross-store updates.
