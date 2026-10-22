@@ -195,7 +195,8 @@ private fun NotesOverview(
                         style = MaterialTheme.typography.bodyMedium)
                 }
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp),
+                LazyColumn(modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = PaddingValues(bottom = 86.dp)) {
                     items(notes, key = { it.id }) { note ->
                         Card(modifier = Modifier.fillMaxWidth().clickable(enabled = !state.busy) {
@@ -226,19 +227,17 @@ private fun NotesOverview(
                     }
                 }
             }
-            FloatingActionButton(
-                onClick = state::create,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-            ) {
-                Text("+", style = MaterialTheme.typography.headlineMedium)
+            if (!state.busy && state.pendingCreateId == null) {
+                FloatingActionButton(
+                    onClick = state::create,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ) {
+                    Text("+", style = MaterialTheme.typography.headlineMedium)
+                }
             }
-            if (state.busy || state.pendingCreateId != null) {
-                // Prevent unsafe duplicate create: keep FAB visible but blocked.
-                Box(Modifier.align(Alignment.BottomEnd).padding(12.dp).size(56.dp)
-                    .clickable(enabled = false) {})
-            }
+
         }
     }
 }
