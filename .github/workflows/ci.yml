@@ -1,0 +1,37 @@
+name: Mobile gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  mobile-gate:
+    name: mobile-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout with base history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Enforce repository limits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          PR_BRANCH: ${{ github.head_ref }}
+        run: python3 scripts/ci/policy.py
+      - name: Run policy regression tests
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
+      - name: Next Android/Rust builds
+        run: |
+          echo "Bootstrap phase: no Android project or Rust mobile crate committed yet."
+          echo "Future PR must add scoped build steps before claiming compilation success."
