@@ -1,0 +1,3 @@
+[workspace]
+members = ["mobile-api", "mobile-jni"]
+resolver = "2"

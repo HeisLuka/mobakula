@@ -4,7 +4,7 @@ The native Android application for [Akula](https://github.com/Lalalalendia/Akula
 
 ## Current milestone: M0 (Android scaffold)
 
-An Android app with Kotlin and Jetpack Compose, three honest navigation sections, and an offline-only launcher. Local note editing, Rust/JNI, pairing and server management are **not implemented** yet; the interface makes this explicit.
+An Android app with Kotlin and Jetpack Compose, three honest navigation sections, and an offline-only launcher. Local note editing, Akula Core integration, pairing and server management are **not implemented** yet; the interface makes this explicit.
 
 ### Development
 
@@ -24,3 +24,7 @@ GitHub Actions [Mobile gate](.github/workflows/ci.yml) compiles an installable *
 Kotlin+Compose implements Android user interface and lifecycle. Portable logic will be Rust via a narrow JNI boundary; integration with Akula Core requires a pinned revision and license review.
 
 See [contribution and size/CI rules](CONTRIBUTING.md), [architecture](docs/architecture.md), [admin setup](docs/admin-setup.md). No networking permission or access to private files is requested at M0.
+
+## Native bridge M0
+
+A tiny Rust `mobile-api` exports a version constant through a JNI `cdylib`. Android loads this through `NativeBridge.apiVersion()` and reports the result. The Actions job cross-compiles arm64-v8a and x86_64 libraries with the pinned Android NDK 28.2.13676358, bundles them inside the debug APK and verifies both entries. **This is ABI wiring, not Akula Core integration or note persistence.**

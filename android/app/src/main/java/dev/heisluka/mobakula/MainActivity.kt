@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -38,6 +39,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun MobileHome() {
     var selected by rememberSaveable { mutableStateOf("local") }
+    val nativeVersion = remember { runCatching { NativeBridge.apiVersion() }.getOrNull() }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -45,6 +47,10 @@ private fun MobileHome() {
     ) {
         Text("Акула", style = MaterialTheme.typography.headlineMedium)
         Text("Мобильное приложение · первый запуск", style = MaterialTheme.typography.bodyMedium)
+        Text(
+            nativeVersion?.let { "Rust JNI: API v$it" } ?: "Ошибка загрузки Rust JNI",
+            style = MaterialTheme.typography.bodySmall,
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ModeButton("Локально", selected == "local") { selected = "local" }
             ModeButton("Связь", selected == "connect") { selected = "connect" }
