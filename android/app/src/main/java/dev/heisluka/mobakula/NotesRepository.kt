@@ -9,7 +9,7 @@ import org.json.JSONObject
 data class NoteDocument(val id: String, val content: String, val hash: String)
 data class NoteHeader(val id: String, val title: String)
 
-class NoteFailure(val code: String, details: String) : Exception("$code: $details")
+class NoteFailure(val code: String, details: String, val noteId: String?) : Exception("$code: $details")
 
 /** Android transport only: all note reads/writes are implemented by Akula Rust. */
 class NotesRepository(context: Context) {
@@ -22,6 +22,7 @@ class NotesRepository(context: Context) {
             throw NoteFailure(
                 response.optString("code", "unknown"),
                 response.optString("message", "Native request failed"),
+                response.optString("note_id").takeIf { it.isNotBlank() && it != "null" },
             )
         }
         return response.get("data")
