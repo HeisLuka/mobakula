@@ -253,6 +253,7 @@ private fun NotesOverview(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NotesEditor(
     state: NotesViewModel,
