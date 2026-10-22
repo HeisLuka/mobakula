@@ -85,7 +85,7 @@ impl NoteVault {
         let now_ms = SystemTime::now().duration_since(UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_millis() as i64);
         core.ui_state.resolve_workspace(&notes.to_string_lossy(), now_ms)
-            .map_err(NotesError::io)?;
+            .map_err(|cause| NotesError::io(format!("{cause:?}")))?;
         Ok(Self { base, notes, core, history_failures })
     }
 
