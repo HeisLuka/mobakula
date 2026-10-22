@@ -94,7 +94,9 @@ jobs:
           cp rust/target/x86_64-linux-android/release/libmobakula_mobile.so android/app/src/main/jniLibs/x86_64/
       - name: Compile debug Android APK
         if: steps.scope.outputs.android == 'true'
-        run: gradle --no-daemon -p android :app:assembleDebug :app:testDebugUnitTest
+        run: |
+          python3 -m py_compile scripts/android/cold_reopen_probe.py
+          gradle --no-daemon -p android :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest
       - name: Check APK contains both JNI ABIs
         if: steps.scope.outputs.android == 'true'
         shell: bash
@@ -121,7 +123,11 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          script: gradle --no-daemon -p android :app:connectedDebugAndroidTest
+          script: |
+            gradle --no-daemon -p android :app:connectedDebugAndroidTest
+            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+            adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            python3 scripts/android/cold_reopen_probe.py --ack-force-stop
       - name: Upload debug APK
         if: steps.scope.outputs.android == 'true'
         uses: actions/upload-artifact@v4
