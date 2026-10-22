@@ -28,9 +28,14 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         private set
     private var saveEvidence by mutableStateOf(NoteSaveEvidence.FILE_READ)
     private val unresolvedHistoryNotes = mutableSetOf<String>()
+    private val autoSave = DebouncedAutoSave(viewModelScope, ::saveAfterIdle)
+    private var autoSaveBlocked by mutableStateOf(false)
 
     val dirty: Boolean get() = opened?.content != draft && opened != null
-    val saveStatus: String get() = noteSaveStatus(dirty, saveEvidence)
+    val saveStatus: String get() =
+        if (autoSaveBlocked && dirty && !needsReview) {
+            "Автосохранение остановлено — сохраните вручную"
+        } else noteSaveStatus(dirty, saveEvidence)
     val canSave: Boolean get() = canSaveNote(dirty, saveEvidence)
     val needsReview: Boolean get() = saveEvidence == NoteSaveEvidence.NEEDS_REVIEW
 
@@ -48,7 +53,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun task(block: suspend () -> Unit) {
+    private fun task(onFailure: (() -> Unit)? = null, block: suspend () -> Unit) {
         if (busy) return
         viewModelScope.launch {
             busy = true
@@ -56,6 +61,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 block()
             } catch (cause: Exception) {
+                onFailure?.invoke()
                 info = null
                 // An uncertain create may already exist on disk. Never display
                 // it as fully saved just because the recovered text is clean.
@@ -146,10 +152,25 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         if (!busy && opened != null) {
             draft = text
             info = if (dirty) "Есть несохранённые изменения" else null
+            autoSave.cancel()
+            if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked)) {
+                autoSave.schedule()
+            }
         }
     }
 
-    fun save() = task {
+    private fun saveAfterIdle() {
+        if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked)) {
+            persist(automatic = true)
+        }
+    }
+
+    fun save() = persist(automatic = false)
+
+    private fun persist(automatic: Boolean) {
+        if (!automatic) autoSave.cancel()
+        if (automatic && !canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked)) return
+        task(onFailure = { if (automatic) autoSaveBlocked = true }) {
         val current = opened ?: return@task
         if (saveEvidence == NoteSaveEvidence.NEEDS_REVIEW) {
             throw NoteFailure("needs_review",
@@ -163,13 +184,18 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         opened = saved
         draft = saved.content
         saveEvidence = NoteSaveEvidence.VERIFIED
+        autoSaveBlocked = false
         headers = repository.list()
-        info = "Файл и история проверены"
+        info = if (automatic) "Автосохранение: файл и история проверены"
+            else "Файл и история проверены"
+        }
     }
 
     fun discard() {
         val current = opened ?: return
         if (busy) return
+        autoSave.cancel()
+        autoSaveBlocked = false
         draft = current.content
         error = null
         info = "Изменения отменены"
@@ -180,6 +206,8 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         if (dirty) {
             error = "Сначала сохраните или отмените изменения"
         } else {
+            autoSave.cancel()
+            autoSaveBlocked = false
             opened = null
             saveEvidence = NoteSaveEvidence.FILE_READ
             info = null

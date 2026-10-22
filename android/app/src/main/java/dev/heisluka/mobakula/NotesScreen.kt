@@ -291,6 +291,12 @@ private fun NotesEditor(
         TextButton(onClick = onExport, enabled = !state.busy && !state.dirty) {
             Text("Экспортировать .md")
         }
+        Text(
+            "После паузы ввода Акула автоматически сохраняет заметку. " +
+                "До подтверждения File Gate правки считаются несохранёнными.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
