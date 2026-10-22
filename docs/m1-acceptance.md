@@ -35,3 +35,11 @@
 3. Import invalid UTF-8 and a file above 1 MiB: app reports an error, does not create a note or silently truncate.
 4. Attempt export with unsaved edits: action is disabled until explicit Save.
 5. **Before uninstalling or reinstalling a debug APK**, export each important note. A per-note Markdown export is not a complete vault or history backup.
+
+## M1+ — idle autosave (separate PR)
+- Editor schedules a write after 1200 ms without typing, through `NotesRepository.save()` and the existing Rust Akula File Gate + HistoryService. No independent Kotlin vault writer or network.
+- Any subsequent keystroke cancels and replaces the pending deadline. Manual Save, discard, or leaving a clean editor cancels an outstanding callback.
+- A successful write must return the verified file+history revision before the UI reports completion. Conflict/unknown history remains visible; after an autosave error, automatic retries are stopped until an explicit Save or discard.
+- The spinner disables editing while one File Gate write is in progress, preventing an old response from overwriting newer text.
+- **Limit:** unsaved keystrokes may be lost if Android force-stops the process during the debounce window or while the write is in flight. A `VERIFIED` save is needed before the force-stop test; this is not an always-durable recovery journal.
+- Unit tests assert one save after inactivity, cancellation on new typing/manual action, and fail-closed handling of uncertain history. The physical phone still requires explicit QA for background/rotation/force-stop and stable signing.
