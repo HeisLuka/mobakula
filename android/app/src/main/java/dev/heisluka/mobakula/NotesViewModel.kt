@@ -1,0 +1,117 @@
+package dev.heisluka.mobakula
+
+import android.app.Application
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
+
+class NotesViewModel(application: Application) : AndroidViewModel(application) {
+    private val repository = NotesRepository(application.applicationContext)
+
+    var headers by mutableStateOf<List<NoteHeader>>(emptyList())
+        private set
+    var opened by mutableStateOf<NoteDocument?>(null)
+        private set
+    var draft by mutableStateOf("")
+        private set
+    var busy by mutableStateOf(true)
+        private set
+    var error by mutableStateOf<String?>(null)
+        private set
+    var info by mutableStateOf<String?>(null)
+        private set
+
+    val dirty: Boolean get() = opened?.content != draft && opened != null
+
+    init {
+        viewModelScope.launch {
+            try {
+                repository.initialize()
+                headers = repository.list()
+                info = "Локальное хранилище открыто"
+            } catch (cause: Exception) {
+                error = cause.message ?: "Не удалось открыть заметки"
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    private fun task(block: suspend () -> Unit) {
+        if (busy) return
+        viewModelScope.launch {
+            busy = true
+            error = null
+            try {
+                block()
+            } catch (cause: Exception) {
+                error = cause.message ?: "Ошибка работы с заметкой"
+                info = null
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun refresh() = task {
+        headers = repository.list()
+        info = "Список обновлён"
+    }
+
+    fun create() = task {
+        val created = repository.create()
+        opened = created
+        draft = created.content
+        headers = repository.list()
+        info = "Заметка создана и записана"
+    }
+
+    fun open(id: String) = task {
+        val note = repository.read(id)
+        opened = note
+        draft = note.content
+        info = null
+    }
+
+    fun update(text: String) {
+        if (!busy && opened != null) {
+            draft = text
+            info = if (dirty) "Есть несохранённые изменения" else "Сохранено"
+        }
+    }
+
+    fun save() = task {
+        val current = opened ?: return@task
+        if (!dirty) {
+            info = "Изменений нет"
+            return@task
+        }
+        val saved = repository.save(current, draft)
+        opened = saved
+        draft = saved.content
+        headers = repository.list()
+        info = "Сохранено в Акуле"
+    }
+
+    fun discard() {
+        val current = opened ?: return
+        if (busy) return
+        draft = current.content
+        error = null
+        info = "Изменения отменены"
+    }
+
+    fun back() {
+        if (busy) return
+        if (dirty) {
+            error = "Сначала сохраните или отмените изменения"
+        } else {
+            opened = null
+            info = null
+            error = null
+        }
+    }
+}
