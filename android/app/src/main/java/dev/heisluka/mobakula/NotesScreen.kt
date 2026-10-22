@@ -4,78 +4,66 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 @Composable
-fun NotesScreen(
-    modifier: Modifier = Modifier,
-    state: NotesViewModel = viewModel(),
-) {
+fun NotesScreen(modifier: Modifier = Modifier, state: NotesViewModel = viewModel()) {
     var search by rememberSaveable { mutableStateOf("") }
-    var confirmDiscard by rememberSaveable { mutableStateOf(false) }
+    var tab by rememberSaveable { mutableStateOf("notes") }
+    var askDiscard by rememberSaveable { mutableStateOf(false) }
+    var exportId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    fun returnToList() {
-        if (state.dirty) confirmDiscard = true else state.back()
+    fun backToList() {
+        if (state.dirty) askDiscard = true else {
+            state.back()
+            tab = "notes"
+        }
     }
 
-    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
-        uri -> if (uri != null) state.importFile(uri)
-    }
+    val importPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> if (uri != null) state.importFile(uri) }
     val exportPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/markdown"),
-    ) { uri -> if (uri != null) state.exportFile(uri) }
+    ) { uri ->
+        val chosen = exportId
+        if (uri != null) {
+            if (chosen != null) state.exportSavedNote(chosen, uri)
+            else state.exportFile(uri)
+        }
+        exportId = null
+    }
 
-    BackHandler(enabled = state.opened != null && !state.busy) { returnToList() }
+    BackHandler(enabled = state.opened != null && !state.busy) { backToList() }
+    BackHandler(enabled = state.opened == null && tab == "files") { tab = "notes" }
 
-    if (confirmDiscard) {
+    if (askDiscard) {
         AlertDialog(
-            onDismissRequest = { confirmDiscard = false },
+            onDismissRequest = { askDiscard = false },
             title = { Text("Несохранённые изменения") },
-            text = { Text("Изменения в заметке не сохранены. Вернуться к списку без них?") },
+            text = { Text("Вернуться без сохранения текста заметки?") },
             confirmButton = {
                 TextButton(onClick = {
                     state.discard()
                     state.back()
-                    confirmDiscard = false
+                    tab = "notes"
+                    askDiscard = false
                 }) { Text("Не сохранять") }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDiscard = false }) { Text("Продолжить") }
+                TextButton(onClick = { askDiscard = false }) { Text("Остаться") }
             },
         )
     }
@@ -84,64 +72,74 @@ fun NotesScreen(
         modifier = modifier,
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.safeDrawing,
-    ) { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(padding)
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("Акула", style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold)
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                ) {
-                    Text("Только на устройстве",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer)
+        bottomBar = {
+            if (state.opened == null) {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                    NavigationBarItem(
+                        selected = tab == "notes",
+                        onClick = { tab = "notes" },
+                        icon = { Text("▤", style = MaterialTheme.typography.titleLarge) },
+                        label = { Text("Заметки") },
+                    )
+                    NavigationBarItem(
+                        selected = tab == "files",
+                        onClick = { tab = "files" },
+                        icon = { Text("⇅", style = MaterialTheme.typography.titleLarge) },
+                        label = { Text("Файлы") },
+                    )
                 }
             }
-
+        },
+    ) { insets ->
+        Column(
+            Modifier.fillMaxSize().padding(insets)
+                .padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             if (state.opened == null) {
-                NotesOverview(
-                    state = state,
-                    search = search,
-                    onSearchChange = { search = it },
-                    onImport = { importPicker.launch(arrayOf("text/*", "application/octet-stream")) },
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                NotesEditor(
-                    state = state,
-                    onBack = ::returnToList,
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    AkulaBrand()
+                    LocalPill()
+                }
+            }
+            when {
+                state.opened != null -> NotesEditor(
+                    state, ::backToList,
                     onExport = {
-                        val current = state.opened
-                        if (current != null) exportPicker.launch("akula-" + current.id + ".md")
+                        exportId = null
+                        state.opened?.let { exportPicker.launch("akula-" + it.id + ".md") }
                     },
                     modifier = Modifier.weight(1f),
                 )
+                tab == "files" -> NotesFiles(
+                    state = state,
+                    onImport = { importPicker.launch(arrayOf("text/*", "application/octet-stream")) },
+                    onExport = { id ->
+                        exportId = id
+                        exportPicker.launch("akula-" + id + ".md")
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                else -> NotesOverview(
+                    state, search, { search = it },
+                    modifier = Modifier.weight(1f),
+                )
             }
-
             if (state.busy) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.padding(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                     Text("Обработка…", style = MaterialTheme.typography.bodySmall)
                 }
             }
             StatusMessage(state.error, state.info)
-            Text(
-                "Предварительная версия: удаление приложения удаляет локальные заметки. " +
-                    "Экспортируйте важные .md перед переустановкой.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (state.opened == null) {
+                Text("Тестовая версия: при удалении приложения локальные заметки исчезнут. " +
+                    "Экспортируйте важные файлы перед переустановкой.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -151,96 +149,95 @@ private fun NotesOverview(
     state: NotesViewModel,
     search: String,
     onSearchChange: (String) -> Unit,
-    onImport: () -> Unit,
     modifier: Modifier,
 ) {
     val query = search.trim()
-    val notes = state.headers.filter { query.isEmpty() || it.title.contains(query, ignoreCase = true) }
-
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column {
+    val notes = state.headers.filter {
+        query.isEmpty() || it.title.contains(query, ignoreCase = true)
+    }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("Мои заметки", style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold)
-                Text(state.headers.size.toString() + " заметок",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium)
+                    fontWeight = FontWeight.Bold)
+                Text(state.headers.size.toString() + " локальных заметок",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Button(onClick = state::create, enabled = !state.busy && state.pendingCreateId == null) { Text("+ Создать") }
+            FilledTonalButton(onClick = state::refresh, enabled = !state.busy) {
+                Text("Обновить")
+            }
         }
-
         OutlinedTextField(
-            value = search,
-            onValueChange = onSearchChange,
+            value = search, onValueChange = onSearchChange,
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Найти заметку") },
-            singleLine = true,
-            shape = RoundedCornerShape(16.dp),
+            placeholder = { Text("Поиск по названиям") },
+            leadingIcon = { Text("⌕", style = MaterialTheme.typography.titleLarge) },
+            singleLine = true, shape = RoundedCornerShape(16.dp),
         )
-
-        TextButton(onClick = onImport, enabled = !state.busy && state.pendingCreateId == null) {
-            Text("Импортировать Markdown или TXT")
-        }
         if (state.pendingCreateId != null) {
-            Text(
-                "Предыдущее создание завершилось неоднозначно. Проверьте существующий файл, " +
-                    "не повторяйте создание: история ещё не подтверждена.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
+            StatusMessage("Создание заметки требует проверки истории. Не повторяйте создание.", null)
             TextButton(onClick = state::inspectPendingCreate, enabled = !state.busy) {
                 Text("Открыть существующую заметку")
             }
         }
-
-        if (notes.isEmpty() && !state.busy) {
-            Box(modifier = Modifier.fillMaxWidth().weight(1f),
-                contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally,
+        Box(Modifier.fillMaxSize()) {
+            if (notes.isEmpty() && !state.busy) {
+                Column(Modifier.align(Alignment.Center).padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (query.isEmpty()) "Пока нет заметок" else "Ничего не найдено",
+                    Text(if (query.isEmpty()) "Заметок пока нет" else "Ничего не найдено",
                         style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        if (query.isEmpty()) "Создайте первую заметку или импортируйте файл."
-                        else "Попробуйте другое слово.",
-                        style = MaterialTheme.typography.bodyMedium,
+                    Text(if (query.isEmpty()) "Создайте первую заметку кнопкой +."
+                        else "Попробуйте другой запрос.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                        style = MaterialTheme.typography.bodyMedium)
                 }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 20.dp),
-            ) {
-                items(notes, key = { it.id }) { note ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth().clickable(enabled = !state.busy) {
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(bottom = 86.dp)) {
+                    items(notes, key = { it.id }) { note ->
+                        Card(modifier = Modifier.fillMaxWidth().clickable(enabled = !state.busy) {
                             state.open(note.id)
-                        },
-                        shape = RoundedCornerShape(18.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface
-                        ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                    ) {
-                        Column(modifier = Modifier.padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(note.title.ifBlank { "Без названия" },
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Medium)
-                            Text("Markdown · Локальная заметка",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }, shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
+                            Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Surface(shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer) {
+                                    Text("▤", Modifier.padding(12.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.titleLarge)
+                                }
+                                Column(Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(note.title.ifBlank { "Без названия" },
+                                        maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold)
+                                    LocalPill()
+                                }
+                                Text("›", style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.primary)
+                            }
                         }
                     }
                 }
             }
+            if (!state.busy && state.pendingCreateId == null) {
+                FloatingActionButton(
+                    onClick = state::create,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ) {
+                    Text("+", style = MaterialTheme.typography.headlineMedium)
+                }
+            }
+
         }
     }
 }
@@ -252,68 +249,96 @@ private fun NotesEditor(
     onExport: () -> Unit,
     modifier: Modifier,
 ) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack, enabled = !state.busy) { Text("← К заметкам") }
-            Text(
-                state.saveStatus,
-                modifier = Modifier.weight(1f),
-                textAlign = TextAlign.End,
-                style = MaterialTheme.typography.labelSmall,
-                color = if (state.dirty || state.needsReview) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        OutlinedTextField(
-            value = state.draft,
-            onValueChange = state::update,
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            enabled = !state.busy,
-            minLines = 10,
-            label = { Text("Текст заметки · Markdown") },
-            shape = RoundedCornerShape(18.dp),
-            textStyle = MaterialTheme.typography.bodyLarge,
-        )
-
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically) {
+    val title = state.draft.lineSequence().firstOrNull()
+        ?.trimStart('#', ' ')?.take(65)?.ifBlank { "Новая заметка" } ?: "Новая заметка"
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = onBack, enabled = !state.busy) { Text("← Назад") }
             Button(onClick = state::save, enabled = !state.busy && state.canSave) {
                 Text("Сохранить")
             }
-            OutlinedButton(onClick = state::discard, enabled = !state.busy && state.dirty) {
-                Text("Отменить правки")
+        }
+        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(state.saveStatus,
+            color = if (state.dirty || state.needsReview) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(
+            value = state.draft, onValueChange = state::update,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            enabled = !state.busy, shape = RoundedCornerShape(18.dp),
+            textStyle = MaterialTheme.typography.bodyLarge,
+            label = { Text("Содержимое Markdown") }, minLines = 8,
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = state::discard,
+                enabled = !state.busy && state.dirty) { Text("Отменить") }
+            OutlinedButton(onClick = onExport,
+                enabled = !state.busy && !state.dirty) { Text("Экспорт .md") }
+        }
+        Text("Автосохранение после паузы ввода. Проверяйте статус: черновики после остановки не восстанавливаются.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun NotesFiles(
+    state: NotesViewModel,
+    onImport: () -> Unit,
+    onExport: (String) -> Unit,
+    modifier: Modifier,
+) {
+    var selectExport by rememberSaveable { mutableStateOf(false) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(13.dp)) {
+        Text("Импорт и экспорт", style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold)
+        FileActionCard("↑", "Импорт .md / .txt",
+            "Добавить файл в локальные заметки.",
+            onImport, enabled = !state.busy && state.pendingCreateId == null)
+        FileActionCard("↓", "Экспорт",
+            "Выбрать заметку и сохранить её копию.",
+            { selectExport = !selectExport }, enabled = !state.busy)
+        if (selectExport) {
+            Text("Выберите заметку для экспорта", style = MaterialTheme.typography.titleMedium)
+            LazyColumn(Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(state.headers, key = { it.id }) { note ->
+                    TextButton(onClick = { onExport(note.id) }, enabled = !state.busy,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text(note.title.ifBlank { "Без названия" }, modifier = Modifier.weight(1f),
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text("↓")
+                    }
+                }
+            }
+        } else {
+            Surface(shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.primaryContainer) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Локальное хранилище", style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold)
+                    Text("Заметки хранятся на этом устройстве и доступны без интернета.",
+                        style = MaterialTheme.typography.bodyMedium)
+                    Text("Экспорт отдельной заметки — не резервная копия всей истории.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
-
-        TextButton(onClick = onExport, enabled = !state.busy && !state.dirty) {
-            Text("Экспортировать .md")
-        }
-        Text(
-            "После паузы ввода Акула автоматически сохраняет заметку. " +
-                "До подтверждения File Gate правки считаются несохранёнными.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
 @Composable
 private fun StatusMessage(error: String?, info: String?) {
     val message = error ?: info ?: return
-    val danger = error != null
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = if (danger) MaterialTheme.colorScheme.errorContainer
-            else MaterialTheme.colorScheme.primaryContainer,
-    ) {
-        Text(message,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
+        color = if (error != null) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.primaryContainer) {
+        Text(message, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             style = MaterialTheme.typography.bodySmall,
-            color = if (danger) MaterialTheme.colorScheme.onErrorContainer
+            color = if (error != null) MaterialTheme.colorScheme.onErrorContainer
                 else MaterialTheme.colorScheme.onPrimaryContainer)
     }
 }
