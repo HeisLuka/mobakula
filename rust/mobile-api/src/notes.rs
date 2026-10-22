@@ -30,13 +30,20 @@ pub struct NoteSummary {
 pub struct NotesError {
     pub code: &'static str,
     pub message: String,
+    /// Present when the primary file may already exist despite an error.
+    pub note_id: Option<String>,
 }
 impl NotesError {
     fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self { code, message: message.into(), note_id: None }
     }
     fn io(error: impl std::fmt::Display) -> Self {
         Self::new("io", error.to_string())
+    }
+
+    fn with_note_id(mut self, id: &str) -> Self {
+        self.note_id = Some(id.to_owned());
+        self
     }
 }
 
@@ -141,10 +148,17 @@ impl NoteVault {
         self.begin_write()?;
         let id = Uuid::new_v4().to_string();
         let path = self.path(&id)?;
-        gate::create(&self.core, &path, content, Source::Me, None)
-            .map_err(gate_error)?;
-        self.verify_history(&path)?;
-        self.read(&id)
+        let published = gate::create(&self.core, &path, content, Source::Me, None)
+            .map_err(|cause| gate_error(cause).with_note_id(&id))?;
+        self.verify_history(&path)
+            .map_err(|cause| cause.with_note_id(&id))?;
+        let note = self.read(&id).map_err(|cause| cause.with_note_id(&id))?;
+        if note.hash != published.hash || note.content != content {
+            return Err(NotesError::new("uncertain",
+                "Created bytes changed before readback; inspect note before retry")
+                .with_note_id(&id));
+        }
+        Ok(note)
     }
 
     pub fn read(&self, id: &str) -> Result<Note, NotesError> {
@@ -162,10 +176,20 @@ impl NoteVault {
         }
         let path = self.check_note(id)?;
         self.begin_write()?;
-        gate::write(&self.core, &path, content, Some(expected_hash), Source::Me, None)
-            .map_err(gate_error)?;
-        self.verify_history(&path)?;
-        self.read(id)
+        let published = gate::write(&self.core, &path, content, Some(expected_hash), Source::Me, None)
+            .map_err(|cause| {
+                let cause = gate_error(cause);
+                if cause.code == "uncertain" { cause.with_note_id(id) } else { cause }
+            })?;
+        self.verify_history(&path)
+            .map_err(|cause| cause.with_note_id(id))?;
+        let note = self.read(id).map_err(|cause| cause.with_note_id(id))?;
+        if note.hash != published.hash || note.content != content {
+            return Err(NotesError::new("uncertain",
+                "Saved bytes changed before readback; inspect note before retry")
+                .with_note_id(id));
+        }
+        Ok(note)
     }
 
     pub fn list(&self) -> Result<Vec<NoteSummary>, NotesError> {
@@ -210,6 +234,26 @@ mod tests {
         drop(vault);
         let reopened = NoteVault::open(dir.path()).unwrap();
         assert_eq!(reopened.read(&saved.id).unwrap().content, "# Изменено\nТекст 🦈\n");
+    }
+
+    #[test]
+    fn history_failure_preserves_created_file_identity_for_recovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = NoteVault::open(dir.path()).unwrap();
+        // Disposable fixture: deliberately obstruct the protected history
+        // directory AFTER opening Core, never on a user's actual vault.
+        let history_dir = vault.notes.join(".aquilum");
+        if history_dir.is_dir() {
+            fs::remove_dir_all(&history_dir).unwrap();
+        }
+        fs::write(&history_dir, b"not a directory").unwrap();
+        let error = vault.create("# Primary exists despite history failure").unwrap_err();
+        assert_eq!(error.code, "uncertain");
+        let id = error.note_id.expect("failed create must retain its note ID");
+        assert_eq!(vault.read(&id).unwrap().content,
+            "# Primary exists despite history failure");
+        assert!(vault.list().unwrap().iter().any(|entry| entry.id == id),
+            "a failed history write must not hide the published note");
     }
 
     #[test]
