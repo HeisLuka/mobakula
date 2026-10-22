@@ -9,7 +9,6 @@ import java.util.UUID
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -59,12 +58,13 @@ class ColdReopenTwoProcessTest {
             .put("hash", saved.getString("hash"))
             .put("stale_hash", initial.getString("hash"))
             .put("content", text)
-        val stream = marker.startWrite()
+        val atomic = marker
+        val stream = atomic.startWrite()
         try {
             stream.write(receipt.toString().toByteArray(Charsets.UTF_8))
-            marker.finishWrite(stream)
+            atomic.finishWrite(stream)
         } catch (cause: Exception) {
-            marker.failWrite(stream)
+            atomic.failWrite(stream)
             throw cause
         }
         assertTrue(marker.baseFile.isFile)
@@ -77,7 +77,7 @@ class ColdReopenTwoProcessTest {
         val expected = JSONObject(marker.openRead().use {
             it.readBytes().toString(Charsets.UTF_8)
         })
-        assertNotEquals("No process restart occurred", expected.getInt("pid"), Process.myPid())
+        assertTrue("No process restart occurred", expected.getInt("pid") != Process.myPid())
         requireOk(JSONObject().put("action", "init").put("root", fixtureRoot.absolutePath))
         val id = expected.getString("id")
         val actual = requireOk(JSONObject().put("action", "read").put("id", id))
