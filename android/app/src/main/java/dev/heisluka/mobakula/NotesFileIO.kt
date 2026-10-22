@@ -51,7 +51,7 @@ internal fun readUtf8Bounded(
 }
 
 internal fun importNoteText(resolver: ContentResolver, uri: Uri): String {
-    return resolver.openInputStream(uri)?.use(::readUtf8Bounded)
+    return resolver.openInputStream(uri)?.use { readUtf8Bounded(it) }
         ?: throw IOException("Не удалось прочитать выбранный файл.")
 }
 
@@ -79,7 +79,7 @@ internal fun exportNoteText(
         null
     } ?: return ExportStatus.UNVERIFIED
 
-    val restored = verificationStream.use(::readUtf8Bounded)
+    val restored = verificationStream.use { readUtf8Bounded(it) }
     if (restored != text) throw IOException("Проверка экспорта: содержимое не совпадает.")
     return ExportStatus.VERIFIED
 }
