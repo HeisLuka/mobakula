@@ -1,0 +1,29 @@
+# Android / Gradle
+.gradle/
+build/
+**/build/
+local.properties
+.idea/
+*.iml
+*.apk
+*.aab
+*.apks
+*.aar
+*.so
+*.jks
+*.keystore
+*.hprof
+# Rust
+target/
+**/target/
+# Secrets
+.env
+.env.*
+!.env.example
+*.p12
+*.p8
+*.pem
+*.key
+# Local
+.DS_Store
+Thumbs.db
