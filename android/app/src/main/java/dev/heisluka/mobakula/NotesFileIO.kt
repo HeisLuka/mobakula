@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets
 // The same ceiling as Rust NoteVault; text is copied once across JNI.
 internal const val MAX_NOTE_TRANSFER_BYTES = 1024 * 1024
 
-internal enum class ExportStatus { VERIFIED, UNVERIFIED }
+enum class ExportStatus { VERIFIED, UNVERIFIED }
 
 /** Reject truncated/invalid UTF-8 and over-large or binary input before File Gate create. */
 internal fun readUtf8Bounded(
