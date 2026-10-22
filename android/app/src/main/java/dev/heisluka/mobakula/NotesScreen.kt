@@ -136,6 +136,12 @@ fun NotesScreen(
                 }
             }
             StatusMessage(state.error, state.info)
+            Text(
+                "Предварительная версия: удаление приложения удаляет локальные заметки. " +
+                    "Экспортируйте важные .md перед переустановкой.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
