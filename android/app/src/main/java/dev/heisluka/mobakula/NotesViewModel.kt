@@ -30,13 +30,17 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     private val unresolvedHistoryNotes = mutableSetOf<String>()
     private val autoSave = DebouncedAutoSave(viewModelScope, ::saveAfterIdle)
     private var autoSaveBlocked by mutableStateOf(false)
+    var imeComposing by mutableStateOf(false)
+        private set
 
     val dirty: Boolean get() = opened?.content != draft && opened != null
-    val saveStatus: String get() =
-        if (autoSaveBlocked && dirty && !needsReview) {
-            "Автосохранение остановлено — сохраните вручную"
-        } else noteSaveStatus(dirty, saveEvidence)
-    val canSave: Boolean get() = canSaveNote(dirty, saveEvidence)
+    val saveStatus: String get() = when {
+        needsReview -> noteSaveStatus(dirty, saveEvidence)
+        imeComposing && dirty -> "Ввод с клавиатуры не завершён — сохранение отложено"
+        autoSaveBlocked && dirty -> "Автосохранение остановлено — сохраните вручную"
+        else -> noteSaveStatus(dirty, saveEvidence)
+    }
+    val canSave: Boolean get() = canSaveNote(dirty, saveEvidence) && !imeComposing
     val needsReview: Boolean get() = saveEvidence == NoteSaveEvidence.NEEDS_REVIEW
 
     init {
@@ -99,6 +103,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         val created = repository.create()
         opened = created
         draft = created.content
+        imeComposing = false
         saveEvidence = NoteSaveEvidence.VERIFIED
         headers = repository.list()
         info = "Заметка создана; файл и история проверены"
@@ -115,6 +120,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         val note = repository.read(id)
         opened = note
         draft = note.content
+        imeComposing = false
         saveEvidence = if (id in unresolvedHistoryNotes) {
             NoteSaveEvidence.NEEDS_REVIEW
         } else {
@@ -132,6 +138,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         val created = repository.importFile(uri)
         opened = created
         draft = created.content
+        imeComposing = false
         saveEvidence = NoteSaveEvidence.VERIFIED
         headers = repository.list()
         info = "Файл импортирован; запись и история проверены"
@@ -159,19 +166,22 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun update(text: String) {
+    // Composition-only IME events must also reach this method. They can end a
+    // composing session without changing the text, and should restart debounce.
+    fun update(text: String, composing: Boolean = false) {
         if (!busy && opened != null) {
+            imeComposing = composing
             draft = text
             info = if (dirty) "Есть несохранённые изменения" else null
             autoSave.cancel()
-            if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked)) {
+            if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked, imeComposing)) {
                 autoSave.schedule()
             }
         }
     }
 
     private fun saveAfterIdle() {
-        if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked)) {
+        if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked, imeComposing)) {
             persist(automatic = true)
         }
     }
@@ -179,8 +189,14 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     fun save() = persist(automatic = false)
 
     private fun persist(automatic: Boolean) {
+        if (imeComposing) {
+            if (!automatic) error = "Завершите ввод с системной клавиатуры перед сохранением"
+            return
+        }
         if (!automatic) autoSave.cancel()
-        if (automatic && !canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked)) return
+        if (automatic && !canScheduleAutoSave(
+                dirty, busy, saveEvidence, autoSaveBlocked, imeComposing,
+            )) return
         task(onFailure = { if (automatic) autoSaveBlocked = true }) {
         val current = opened ?: return@task
         if (saveEvidence == NoteSaveEvidence.NEEDS_REVIEW) {
@@ -207,6 +223,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         if (busy) return
         autoSave.cancel()
         autoSaveBlocked = false
+        imeComposing = false
         draft = current.content
         error = null
         info = "Изменения отменены"
@@ -220,6 +237,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
             autoSave.cancel()
             autoSaveBlocked = false
             opened = null
+            imeComposing = false
             saveEvidence = NoteSaveEvidence.FILE_READ
             info = null
             error = null
