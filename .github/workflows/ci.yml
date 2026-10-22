@@ -60,9 +60,9 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
-      - name: Install Android API 37
+      - name: Install Android API 37.0
         if: steps.scope.outputs.android == 'true'
-        run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
       - name: Compile debug Android APK
         if: steps.scope.outputs.android == 'true'
         run: gradle --no-daemon -p android :app:assembleDebug :app:testDebugUnitTest
