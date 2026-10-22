@@ -48,8 +48,20 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 block()
             } catch (cause: Exception) {
-                error = cause.message ?: "Ошибка работы с заметкой"
                 info = null
+                // A primary create can succeed while HistoryService fails.
+                // Recover the existing ID rather than inviting another create.
+                val affected = (cause as? NoteFailure)?.noteId
+                if (affected != null && opened == null) {
+                    val recovered = runCatching { repository.read(affected) }.getOrNull()
+                    if (recovered != null) {
+                        opened = recovered
+                        draft = recovered.content
+                    }
+                }
+                error = if (affected != null) {
+                    "Требуется проверка сохранения заметки $affected: ${cause.message}"
+                } else cause.message ?: "Ошибка работы с заметкой"
             } finally {
                 busy = false
             }
