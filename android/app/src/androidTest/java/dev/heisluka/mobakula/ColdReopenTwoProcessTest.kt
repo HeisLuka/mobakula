@@ -1,5 +1,6 @@
 package dev.heisluka.mobakula
 
+import android.os.Bundle
 import android.os.Process
 import android.util.AtomicFile
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -68,6 +69,8 @@ class ColdReopenTwoProcessTest {
             throw cause
         }
         assertTrue(marker.baseFile.isFile)
+        InstrumentationRegistry.getInstrumentation().sendStatus(0,
+            Bundle().apply { putString("akula_cold_check", "prepared") })
     }
 
     @Test
@@ -93,5 +96,7 @@ class ColdReopenTwoProcessTest {
         assertFalse(stale.getBoolean("ok"))
         assertEquals("conflict", stale.getString("code"))
         marker.delete()
+        InstrumentationRegistry.getInstrumentation().sendStatus(0,
+            Bundle().apply { putString("akula_cold_check", "verified") })
     }
 }
