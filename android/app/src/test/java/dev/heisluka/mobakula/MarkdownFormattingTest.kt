@@ -118,4 +118,42 @@ class MarkdownFormattingTest {
         assertEquals("**🦈** язык", result.text)
         assertEquals(TextRange(2, 4), result.selection)
     }
+    @Test
+    fun leadingEmptyLineIsFormattedInsteadOfNextLine() {
+        val result = edit("\nследующая", 0, command = MarkdownCommand.HEADING)
+        assertEquals("# \nследующая", result.text)
+        assertEquals(TextRange(2), result.selection)
+    }
+
+    @Test
+    fun emptyNoteCanStartWithBulletMarker() {
+        val result = edit("", 0, command = MarkdownCommand.BULLET)
+        assertEquals("- ", result.text)
+        assertEquals(TextRange(2), result.selection)
+    }
+
+    @Test
+    fun completeOneCheckboxPreservesCaretOffset() {
+        val source = "- [ ] задача"
+        val result = edit(source, source.length, command = MarkdownCommand.TASK_DONE)
+        assertEquals("- [x] задача", result.text)
+        assertEquals(TextRange(source.length), result.selection)
+    }
+
+    @Test
+    fun mixedChecklistsCompleteTogetherAndThenReopen() {
+        val source = "- [ ] первая\n- [x] вторая\nобычная"
+        val selection = TextFieldValue(source, selection = TextRange(0, source.length))
+        val allDone = applyMarkdownCommand(selection, MarkdownCommand.TASK_DONE)
+        assertEquals("- [x] первая\n- [x] вторая\nобычная", allDone.text)
+        val restored = applyMarkdownCommand(allDone, MarkdownCommand.TASK_DONE)
+        assertEquals("- [ ] первая\n- [ ] вторая\nобычная", restored.text)
+    }
+
+    @Test
+    fun completingNonTaskLineLeavesEditorUntouched() {
+        val field = TextFieldValue("обычный текст", selection = TextRange(2))
+        assertEquals(field, applyMarkdownCommand(field, MarkdownCommand.TASK_DONE))
+    }
+
 }
