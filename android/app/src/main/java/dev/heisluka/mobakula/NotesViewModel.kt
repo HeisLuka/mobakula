@@ -142,6 +142,17 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun exportSavedNote(id: String, uri: Uri) = task {
+        // Export a fresh saved revision from Rust, never the unsaved editor draft.
+        val current = repository.read(id)
+        val result = repository.exportFile(current, uri)
+        info = if (result == ExportStatus.VERIFIED) {
+            "Экспорт проверен повторным чтением"
+        } else {
+            "Файл экспортирован, но проверить чтением не удалось. Проверьте его вручную."
+        }
+    }
+
     fun update(text: String) {
         if (!busy && opened != null) {
             draft = text
