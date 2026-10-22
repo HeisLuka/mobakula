@@ -180,6 +180,17 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // TextFieldValue's composing region is not durable across editor recreation
+    // (such as rotation). Do not leave the preserved ViewModel permanently blocked.
+    fun onEditorRecreated() {
+        if (!imeComposing) return
+        imeComposing = false
+        autoSave.cancel()
+        if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked, false)) {
+            autoSave.schedule()
+        }
+    }
+
     private fun saveAfterIdle() {
         if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked, imeComposing)) {
             persist(automatic = true)
