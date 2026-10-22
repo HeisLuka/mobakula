@@ -4,7 +4,7 @@ The native Android application for [Akula](https://github.com/Lalalalendia/Akula
 
 ## Current milestone: M0 (Android scaffold)
 
-An Android app with Kotlin and Jetpack Compose, three honest navigation sections, and an offline-only launcher. Local note editing, Akula Core integration, pairing and server management are **not implemented** yet; the interface makes this explicit.
+An Android app with Kotlin and Jetpack Compose, three honest navigation sections, and an offline-only launcher. M1 local notes are implemented through pinned Akula Core File Gate; pairing and server management remain **unimplemented**. the interface makes this explicit.
 
 ### Development
 
@@ -32,3 +32,7 @@ A tiny Rust `mobile-api` exports a version constant through a JNI `cdylib`. Andr
 ## M1 upstream Core portability
 
 Android note persistence will use the *real* Akula File Gate and HistoryService, never a Kotlin or isolated mobile writer. The dependency is pinned to Akula commit `d4487a78083150924a7a8b8ea85693d931041960`. The first M1 change only proves that this upstream Rust core can be resolved and compiled for Android targets; it does not claim note CRUD yet. Any portability blocker must be fixed in a narrow, audited upstream adapter instead of copied logic.
+
+## M1 local notes
+
+The Android app now has a note list/editor with explicit Save, revision conflict errors and no network permissions. Rust NoteVault reuses **Akula File Gate + HistoryService** through JNI. Compilation is not physical-device acceptance. See [M1 acceptance and limitations](docs/m1-acceptance.md).
