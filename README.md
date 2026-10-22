@@ -28,3 +28,7 @@ See [contribution and size/CI rules](CONTRIBUTING.md), [architecture](docs/archi
 ## Native bridge M0
 
 A tiny Rust `mobile-api` exports a version constant through a JNI `cdylib`. Android loads this through `NativeBridge.apiVersion()` and reports the result. The Actions job cross-compiles arm64-v8a and x86_64 libraries with the pinned Android NDK 28.2.13676358, bundles them inside the debug APK and verifies both entries. **This is ABI wiring, not Akula Core integration or note persistence.**
+
+## M1 upstream Core portability
+
+Android note persistence will use the *real* Akula File Gate and HistoryService, never a Kotlin or isolated mobile writer. The dependency is pinned to Akula commit `d4487a78083150924a7a8b8ea85693d931041960`. The first M1 change only proves that this upstream Rust core can be resolved and compiled for Android targets; it does not claim note CRUD yet. Any portability blocker must be fixed in a narrow, audited upstream adapter instead of copied logic.
