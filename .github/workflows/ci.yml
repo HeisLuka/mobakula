@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      android_runtime:
+        description: "Run Android JNI/File Gate emulator smoke (slow, opt-in)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -95,6 +101,27 @@ jobs:
         run: |
           unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -F 'lib/arm64-v8a/libmobakula_mobile.so'
           unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -F 'lib/x86_64/libmobakula_mobile.so'
+      - name: Enable manually requested runtime smoke
+        if: steps.scope.outputs.android == 'true'
+        id: runtime
+        env:
+          RUN_ANDROID_RUNTIME: ${{ inputs.android_runtime || 'false' }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$RUN_ANDROID_RUNTIME" == "true" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run Android JNI + File Gate runtime smoke
+        if: steps.runtime.outputs.run == 'true'
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: gradle --no-daemon -p android :app:connectedDebugAndroidTest
       - name: Upload debug APK
         if: steps.scope.outputs.android == 'true'
         uses: actions/upload-artifact@v4
