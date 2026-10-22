@@ -1,0 +1,129 @@
+name: Sign device-test APK
+
+# No PR/push trigger. Never expose test signing keys to ordinary CI.
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Successful Mobile gate push run ID for current main"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: mobakula-device-test-signing
+  cancel-in-progress: false
+
+jobs:
+  sign-device-test:
+    name: sign-device-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: device-test-signing
+    steps:
+      - name: Checkout current main (no persisted credentials)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Reject alternate branches and unverified source runs
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "Only main can sign"; exit 1; }
+          [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]] || { echo "Invalid source run ID"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > "$RUNNER_TEMP/source-run.json"
+          SOURCE_CODE=$(python3 scripts/ci/device_sign_source.py validate-run \
+            "$RUNNER_TEMP/source-run.json" "$GITHUB_SHA" "$GITHUB_REPOSITORY")
+          echo "code=$SOURCE_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Download existing tested APK from that exact push
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mobakula-debug
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+          repository: ${{ github.repository }}
+          path: ${{ runner.temp }}/incoming
+
+      - name: Install Android APK signing tools
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install build-tools
+        run: sdkmanager "build-tools;36.0.0"
+
+      - name: Verify APK package and increasing build number
+        env:
+          SOURCE_CODE: ${{ steps.source.outputs.code }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/incoming/app-debug.apk"
+          test -f "$APK" || { echo "Missing APK"; exit 1; }
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" > "$RUNNER_TEMP/apk-badging.txt"
+          python3 scripts/ci/device_sign_source.py validate-apk \
+            "$RUNNER_TEMP/apk-badging.txt" "$SOURCE_CODE"
+
+      - name: Re-sign with protected long-lived device-test identity
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.MOBAKULA_TEST_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.MOBAKULA_TEST_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ vars.MOBAKULA_TEST_KEY_ALIAS }}
+          EXPECTED_CERT: ${{ vars.MOBAKULA_TEST_CERT_SHA256 }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_CODE: ${{ steps.source.outputs.code }}
+        run: |
+          set -euo pipefail
+          [[ -n "$KEYSTORE_B64" && -n "$KS_PASS" && -n "$KEY_ALIAS" && -n "$EXPECTED_CERT" ]] || {
+            echo "Missing protected signing configuration; no APK signed"; exit 1;
+          }
+          [[ "$KEY_ALIAS" =~ ^[a-zA-Z0-9_.-]+$ ]] || { echo "Invalid key alias"; exit 1; }
+          umask 077
+          OUT="$RUNNER_TEMP/device-test"
+          mkdir -p "$OUT"
+          KEYSTORE="$RUNNER_TEMP/device-test.p12"
+          trap 'rm -f "$KEYSTORE"' EXIT
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+          SIGNED="$OUT/mobakula-device-test.apk"
+          SIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          "$SIGNER" sign --ks "$KEYSTORE" --ks-type PKCS12 \
+            --ks-key-alias "$KEY_ALIAS" --ks-pass env:KS_PASS \
+            --out "$SIGNED" "$RUNNER_TEMP/incoming/app-debug.apk"
+          "$SIGNER" verify --verbose --print-certs "$SIGNED" > "$RUNNER_TEMP/certs.txt"
+          ACTUAL=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+            "$RUNNER_TEMP/certs.txt" | head -n 1)
+          ACTUAL="${ACTUAL//:/}"
+          EXPECTED="${EXPECTED_CERT//:/}"
+          [[ "$ACTUAL" =~ ^[a-fA-F0-9]{64}$ && "$EXPECTED" =~ ^[a-fA-F0-9]{64}$ ]] || {
+            echo "Signing certificate fingerprint missing or malformed"; exit 1;
+          }
+          [[ "${ACTUAL,,}" == "${EXPECTED,,}" ]] || {
+            echo "Signing identity differs from the approved certificate"; exit 1;
+          }
+          printf '%s  %s\n' "$(sha256sum "$SIGNED" | cut -d' ' -f1)" \
+            "mobakula-device-test.apk" > "$OUT/SHA256SUMS.txt"
+          {
+            echo "source_run_id=$SOURCE_RUN_ID"
+            echo "source_commit=$GITHUB_SHA"
+            echo "application_id=dev.heisluka.mobakula"
+            echo "version_code=$SOURCE_CODE"
+            echo "signer_cert_sha256=$ACTUAL"
+          } > "$OUT/provenance.txt"
+          echo "Signed verified APK with fixed device-test identity; not a store release."
+
+      - name: Upload short-lived signed test APK and verification
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mobakula-device-test-signed
+          path: ${{ runner.temp }}/device-test/
+          if-no-files-found: error
+          retention-days: 14

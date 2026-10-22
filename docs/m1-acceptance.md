@@ -43,3 +43,10 @@
 - The spinner disables editing while one File Gate write is in progress, preventing an old response from overwriting newer text.
 - **Limit:** unsaved keystrokes may be lost if Android force-stops the process during the debounce window or while the write is in flight. A `VERIFIED` save is needed before the force-stop test; this is not an always-durable recovery journal.
 - Unit tests assert one save after inactivity, cancellation on new typing/manual action, and fail-closed handling of uncertain history. The physical phone still requires explicit QA for background/rotation/force-stop and stable signing.
+
+## Signed update acceptance (manual)
+
+- Normal CI debug APKs still use runner-specific ephemeral debug identities. Never uninstall the app to overcome a signer mismatch if notes matter.
+- A manually signed test APK uses a fixed certificate **only after** environment secrets and the approved cert fingerprint are configured. Every new `main` push `Mobile gate` build gets increasing `versionCode` from the Actions run number.
+- Test on a clean device: install device-test signed build A, create and verify a note, then install a newer **device-test signed** build B *without uninstalling*. Confirm the applicationId/certificate match and the versionCode of B exceeds A. Reopen original note in airplane mode; compare its exact content and history. An install error is a stop condition: export data, do not uninstall.
+- A device-test signer is **not** Google Play/RuStore production signer. Store migration might require explicit export/import; do not promise seamless cross-store updates.

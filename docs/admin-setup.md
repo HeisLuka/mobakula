@@ -9,3 +9,7 @@ Connector currently has write/push but not admin. The owner must configure these
 5. Do not require an unavailable second reviewer on a single-maintainer repository. Security/release/CI changes are never blindly auto-merged.
 
 The PR workflow is one top-level Actions workflow and one job; no independent diagnostics or matrix. After the first local Android build is added, extend that same job with scope-aware compilation.
+
+## Protected device-test APK signing
+
+Create a GitHub environment named `device-test-signing` restricted to branch `main`. Store the long-lived **test-only** keystore and password in environment secrets; store approved alias and signer certificate SHA-256 in environment variables. See [device-test signing](device-test-signing.md). This is a separate manually-triggered workflow. Do not put a signing key in the repository, generic PR secrets, or artifacts. The connector has no admin rights to provision these secrets.

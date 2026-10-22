@@ -3,6 +3,17 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Actions run numbers increase for the single Mobile gate workflow.
+// Local Android builds keep code 1; CI builds receive a monotonic code.
+val ciRunNumber = providers.environmentVariable("GITHUB_RUN_NUMBER").orNull
+val mobileVersionCode = ciRunNumber?.let { run ->
+    val parsed = run.toIntOrNull()
+    require(parsed != null && parsed in 1..2_100_000_000) {
+        "Invalid GitHub Actions run number for Android versionCode"
+    }
+    parsed
+} ?: 1
+
 android {
     namespace = "dev.heisluka.mobakula"
     compileSdk = 37
@@ -11,7 +22,7 @@ android {
         applicationId = "dev.heisluka.mobakula"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        versionCode = mobileVersionCode
         versionName = "0.1.0-dev"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
