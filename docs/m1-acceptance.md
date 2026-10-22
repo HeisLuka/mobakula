@@ -17,7 +17,9 @@
 
 ## Known limitations
 - Manual **Save** is required. An unsaved draft can be lost if Android kills the process: the UI displays an unsaved warning. Do not call this fully crash-resilient autosave.
-- No physical-device or emulator evidence until tested. Compiled JNI symbols are not proof of runtime loading.
+- Emulator proof: [GitHub Actions #39852740106](https://github.com/HeisLuka/mobakula/actions/runs/39852740106), Android API 35 x86_64, `NativeNotesRoundTripTest` **1/1 passed, 0 failed**. Android runtime loaded JNI; File Gate created, edited, read and listed a note, refused stale hashes, and verified no INTERNET permission.
+- Slow emulator smoke is **manual opt-in**, Actions → Mobile gate → Run workflow → `android_runtime=true`; normal PR/push jobs do not run an emulator. The third-party action is pinned to an immutable commit.
+- Physical Android handset acceptance is still pending: no proof yet for process death, update signing, battery or long-term note history.
 - Android debug APK produced by isolated GitHub runners may have different debug signing identities between runs. **Do not uninstall an APK containing important notes to update it:** uninstalling destroys its private data. Stable update signing must be configured before data-bearing upgrade tests.
 - Core portability has been proven for compile/link, not memory/battery performance, all Android versions or host custody.
 
