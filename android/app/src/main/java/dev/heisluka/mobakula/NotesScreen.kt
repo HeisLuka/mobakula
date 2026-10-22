@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,6 +13,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -133,7 +142,9 @@ fun NotesScreen(modifier: Modifier = Modifier, state: NotesViewModel = viewModel
                     Text("Обработка…", style = MaterialTheme.typography.bodySmall)
                 }
             }
-            StatusMessage(state.error, state.info)
+            if (state.opened == null || state.error != null) {
+                StatusMessage(state.error, state.info)
+            }
             if (state.opened == null) {
                 Text("Тестовая версия: при удалении приложения локальные заметки исчезнут. " +
                     "Экспортируйте важные файлы перед переустановкой.",
@@ -242,6 +253,7 @@ private fun NotesOverview(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NotesEditor(
     state: NotesViewModel,
@@ -249,9 +261,54 @@ private fun NotesEditor(
     onExport: () -> Unit,
     modifier: Modifier,
 ) {
+    // TextFieldValue owns cursor, selection and IME composition; the ViewModel
+    // remains the only source for persisted content and autosave decisions.
+    var editor by rememberSaveable(state.opened?.id, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(state.draft))
+    }
+    // One bounded undo history per opened note. Rust HistoryService remains durable.
+    val editHistory = remember(state.opened?.id) { DraftEditHistory() }
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val keyboardVisible = WindowInsets.isImeVisible
+    LaunchedEffect(state.draft) {
+        // File Gate may normalize a saved text or Discard may restore content.
+        // Do not reset the current caret on a selection-only IME event.
+        if (editor.text != state.draft) {
+            editHistory.clear()
+            val length = state.draft.length
+            editor = editor.copy(
+                text = state.draft,
+                selection = TextRange(
+                    editor.selection.start.coerceIn(0, length),
+                    editor.selection.end.coerceIn(0, length),
+                ),
+                composition = null,
+            )
+        }
+    }
+
+    fun format(command: MarkdownCommand) {
+        if (state.busy) return
+        val updated = applyMarkdownCommand(editor, command)
+        if (updated.text != editor.text) editHistory.record(editor, updated)
+        editor = updated
+        if (updated.text != state.draft) state.update(updated.text)
+        focusRequester.requestFocus()
+        keyboardController?.show()
+    }
+
+    fun restore(value: TextFieldValue?) {
+        if (state.busy || value == null) return
+        editor = value
+        if (value.text != state.draft) state.update(value.text)
+        focusRequester.requestFocus()
+        keyboardController?.show()
+    }
+
     val title = state.draft.lineSequence().firstOrNull()
         ?.trimStart('#', ' ')?.take(65)?.ifBlank { "Новая заметка" } ?: "Новая заметка"
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(onClick = onBack, enabled = !state.busy) { Text("← Назад") }
@@ -259,28 +316,71 @@ private fun NotesEditor(
                 Text("Сохранить")
             }
         }
-        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
-            maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (!keyboardVisible) {
+            Text(title, style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
         Text(state.saveStatus,
             color = if (state.dirty || state.needsReview) MaterialTheme.colorScheme.error
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(
-            value = state.draft, onValueChange = state::update,
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            enabled = !state.busy, shape = RoundedCornerShape(18.dp),
+            value = editor,
+            onValueChange = { next ->
+                // Ignore a late IME callback while File Gate is saving.
+                if (!state.busy) {
+                    if (next.text != editor.text) editHistory.record(editor, next)
+                    editor = next
+                    if (next.text != state.draft) state.update(next.text)
+                }
+            },
+            modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(focusRequester),
+            enabled = !state.busy,
+            shape = RoundedCornerShape(18.dp),
             textStyle = MaterialTheme.typography.bodyLarge,
-            label = { Text("Содержимое Markdown") }, minLines = 8,
+            label = { Text("Содержимое Markdown") },
+            minLines = if (keyboardVisible) 2 else 8,
         )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = state::discard,
-                enabled = !state.busy && state.dirty) { Text("Отменить") }
-            OutlinedButton(onClick = onExport,
-                enabled = !state.busy && !state.dirty) { Text("Экспорт .md") }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AssistChip(
+                onClick = { restore(editHistory.undo(editor)) },
+                enabled = !state.busy && editHistory.canUndo,
+                label = { Text("↶", style = MaterialTheme.typography.labelLarge) },
+                modifier = Modifier.semantics { contentDescription = "Отменить изменение" },
+            )
+            AssistChip(
+                onClick = { restore(editHistory.redo(editor)) },
+                enabled = !state.busy && editHistory.canRedo,
+                label = { Text("↷", style = MaterialTheme.typography.labelLarge) },
+                modifier = Modifier.semantics { contentDescription = "Повторить изменение" },
+            )
+            MarkdownCommand.entries.forEach { command ->
+                AssistChip(
+                    onClick = { format(command) },
+                    enabled = !state.busy,
+                    label = { Text(command.glyph, style = MaterialTheme.typography.labelLarge) },
+                    modifier = Modifier.semantics {
+                        contentDescription = command.description
+                    },
+                )
+            }
         }
-        Text("Автосохранение после паузы ввода. Проверяйте статус: черновики после остановки не восстанавливаются.",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!keyboardVisible) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = state::discard,
+                    enabled = !state.busy && state.dirty) { Text("Отменить") }
+                OutlinedButton(onClick = onExport,
+                    enabled = !state.busy && !state.dirty) { Text("Экспорт .md") }
+            }
+            Text("Автосохранение после паузы ввода. Проверяйте статус: " +
+                "черновики после остановки не восстанавливаются.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
