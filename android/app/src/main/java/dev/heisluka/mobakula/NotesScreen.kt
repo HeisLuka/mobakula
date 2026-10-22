@@ -134,7 +134,7 @@ fun NotesScreen(modifier: Modifier = Modifier, state: NotesViewModel = viewModel
                 }
             }
             StatusMessage(state.error, state.info)
-            if (state.opened == null && tab == "files") {
+            if (state.opened == null) {
                 Text("Тестовая версия: при удалении приложения локальные заметки исчезнут. " +
                     "Экспортируйте важные файлы перед переустановкой.",
                     style = MaterialTheme.typography.labelSmall,
@@ -278,7 +278,7 @@ private fun NotesEditor(
             OutlinedButton(onClick = onExport,
                 enabled = !state.busy && !state.dirty) { Text("Экспорт .md") }
         }
-        Text("Сохранение вручную. Пока нет автоматического восстановления черновиков.",
+        Text("Автосохранение после паузы ввода. Проверяйте статус: черновики после остановки не восстанавливаются.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
