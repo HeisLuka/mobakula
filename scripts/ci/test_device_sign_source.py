@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from device_sign_source import validate_apk_badging, validate_run
+from device_sign_source import validate_apk_badging, validate_main_ruleset, validate_run
 
 
 def valid_run() -> dict:
@@ -47,6 +47,29 @@ class SigningProvenanceTests(unittest.TestCase):
                 data["run_number"] = code
                 with self.assertRaises(ValueError):
                     validate_run(data, "a" * 40, "HeisLuka/mobakula")
+
+    def test_main_ruleset_must_be_active_and_require_gate(self):
+        ruleset = {
+            "target": "branch", "enforcement": "active",
+            "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"]}},
+            "rules": [
+                {"type": "deletion"}, {"type": "non_fast_forward"},
+                {"type": "pull_request"},
+                {"type": "required_status_checks",
+                 "parameters": {"required_status_checks": [{"context": "mobile-gate"}]}},
+            ],
+        }
+        validate_main_ruleset(ruleset)
+        for broken in ("disabled", "evaluate"):
+            copied = copy.deepcopy(ruleset)
+            copied["enforcement"] = broken
+            with self.assertRaises(ValueError):
+                validate_main_ruleset(copied)
+        for name in ("pull_request", "non_fast_forward", "required_status_checks"):
+            copied = copy.deepcopy(ruleset)
+            copied["rules"] = [r for r in copied["rules"] if r["type"] != name]
+            with self.assertRaises(ValueError):
+                validate_main_ruleset(copied)
 
     def test_apk_package_and_monotonic_code(self):
         info = "package: name='dev.heisluka.mobakula' versionCode='36' versionName='0.1.0-dev'"

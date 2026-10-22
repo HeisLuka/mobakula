@@ -29,6 +29,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Require the existing main ruleset to be ACTIVE
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ruleset 25669997 already defines PR-only main, non-FF protection
+          # and the mobile-gate check. Never allow secrets to sign when disabled.
+          gh api "repos/$GITHUB_REPOSITORY/rulesets/25669997" > "$RUNNER_TEMP/main-ruleset.json"
+          python3 scripts/ci/device_sign_source.py validate-ruleset "$RUNNER_TEMP/main-ruleset.json"
+
       - name: Reject alternate branches and unverified source runs
         id: source
         shell: bash

@@ -50,10 +50,32 @@ def validate_apk_badging(output: str, expected_code: int) -> None:
         raise ValueError("APK versionCode differs from CI source run")
 
 
+
+def validate_main_ruleset(ruleset: dict) -> None:
+    """Reject signing unless real GitHub main branch protection is active."""
+    if ruleset.get("enforcement") != "active" or ruleset.get("target") != "branch":
+        raise ValueError("main ruleset is not active")
+    includes = ruleset.get("conditions", {}).get("ref_name", {}).get("include", [])
+    if "~DEFAULT_BRANCH" not in includes and "refs/heads/main" not in includes:
+        raise ValueError("main is not covered by this ruleset")
+    rules = ruleset.get("rules", [])
+    names = {item.get("type") for item in rules}
+    for required in ("deletion", "non_fast_forward", "pull_request", "required_status_checks"):
+        if required not in names:
+            raise ValueError(f"main protection missing: {required}")
+    checks = next(item for item in rules if item.get("type") == "required_status_checks")
+    required_checks = checks.get("parameters", {}).get("required_status_checks", [])
+    if not any(item.get("context") == "mobile-gate" for item in required_checks):
+        raise ValueError("mobile-gate is not a required check")
+
 def main(argv: list[str]) -> None:
     if len(argv) == 5 and argv[1] == "validate-run":
         run = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
         print(validate_run(run, argv[3], argv[4]))
+    elif len(argv) == 3 and argv[1] == "validate-ruleset":
+        ruleset = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
+        validate_main_ruleset(ruleset)
+        print("Main protection is active")
     elif len(argv) == 4 and argv[1] == "validate-apk":
         validate_apk_badging(
             Path(argv[2]).read_text(encoding="utf-8"), int(argv[3]),

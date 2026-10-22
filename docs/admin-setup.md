@@ -13,3 +13,5 @@ The PR workflow is one top-level Actions workflow and one job; no independent di
 ## Protected device-test APK signing
 
 Create a GitHub environment named `device-test-signing` restricted to branch `main`. Store the long-lived **test-only** keystore and password in environment secrets; store approved alias and signer certificate SHA-256 in environment variables. See [device-test signing](device-test-signing.md). This is a separate manually-triggered workflow. Do not put a signing key in the repository, generic PR secrets, or artifacts. The connector has no admin rights to provision these secrets.
+
+Before uploading *any* signing secret: [enable existing main ruleset #25669997](https://github.com/HeisLuka/mobakula/rules/25669997). It was reported as `enforcement=disabled` in the API on 23 October 2026 despite having PR + mobile-gate protections configured. Signer fails closed until this is `active`; only the repository admin can change it.
