@@ -39,7 +39,7 @@ jobs:
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" || ! "${BASE_SHA}" =~ ^[a-f0-9]{40}$ || "${BASE_SHA}" == "0000000000000000000000000000000000000000" ]]; then
             echo "android=true" >> "${GITHUB_OUTPUT}"
-          elif git diff --name-only "${BASE_SHA}...HEAD" | grep -Eq '^(android/|\.github/workflows/ci\.yml$|scripts/ci/)'; then
+          elif git diff --name-only "${BASE_SHA}...HEAD" | grep -Eq '^(android/|rust/|\.github/workflows/ci\.yml$|scripts/ci/)'; then
             echo "android=true" >> "${GITHUB_OUTPUT}"
           else
             echo "android=false" >> "${GITHUB_OUTPUT}"
@@ -63,9 +63,34 @@ jobs:
       - name: Install Android API 37.0
         if: steps.scope.outputs.android == 'true'
         run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+      - name: Install Android NDK 28
+        if: steps.scope.outputs.android == 'true'
+        run: sdkmanager "ndk;28.2.13676358"
+      - name: Test portable Rust API
+        if: steps.scope.outputs.android == 'true'
+        run: cargo test --manifest-path rust/Cargo.toml --workspace
+      - name: Build native Rust libraries
+        if: steps.scope.outputs.android == 'true'
+        shell: bash
+        run: |
+          rustup target add aarch64-linux-android x86_64-linux-android
+          NDK_BIN="${ANDROID_HOME}/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${NDK_BIN}/aarch64-linux-android26-clang"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="${NDK_BIN}/x86_64-linux-android26-clang"
+          cargo build --release --manifest-path rust/Cargo.toml -p mobakula-mobile-jni --target aarch64-linux-android
+          cargo build --release --manifest-path rust/Cargo.toml -p mobakula-mobile-jni --target x86_64-linux-android
+          mkdir -p android/app/src/main/jniLibs/{arm64-v8a,x86_64}
+          cp rust/target/aarch64-linux-android/release/libmobakula_mobile.so android/app/src/main/jniLibs/arm64-v8a/
+          cp rust/target/x86_64-linux-android/release/libmobakula_mobile.so android/app/src/main/jniLibs/x86_64/
       - name: Compile debug Android APK
         if: steps.scope.outputs.android == 'true'
         run: gradle --no-daemon -p android :app:assembleDebug :app:testDebugUnitTest
+      - name: Check APK contains both JNI ABIs
+        if: steps.scope.outputs.android == 'true'
+        shell: bash
+        run: |
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -F 'lib/arm64-v8a/libmobakula_mobile.so'
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -F 'lib/x86_64/libmobakula_mobile.so'
       - name: Upload debug APK
         if: steps.scope.outputs.android == 'true'
         uses: actions/upload-artifact@v4

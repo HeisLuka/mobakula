@@ -1,0 +1,12 @@
+[package]
+name = "mobakula-mobile-jni"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "mobakula_mobile"
+crate-type = ["cdylib"]
+
+[dependencies]
+mobakula-mobile-api = { path = "../mobile-api" }
