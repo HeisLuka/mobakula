@@ -1,7 +1,7 @@
 # M1 — real local notes (Android)
 
 ## Implemented in this change
-- User can create, list, open, edit and explicitly save a Markdown note.
+- User can create, list, open, edit and save Markdown notes explicitly or after a 1.2-second idle window (debounced autosave).
 - Kotlin/Compose renders the UI and calls a single JNI JSON request adapter.
 - Rust NoteVault owns the app-private notes workspace. Mutations use **Akula Core File Gate create/write** with HistoryService and expected BLAKE3 revision hash.
 - A save conflict, bad identifier, large note, or history warning is shown as an error. The editor does **not** silently overwrite a changed note.
@@ -13,10 +13,10 @@
 1. Rust unit: create → read → edit with revision → list → stale hash refused → reopen same files; malformed ID and oversized content rejected.
 2. GitHub CI: one workflow / one job. Cargo tests, Rust Android arm64 and x86_64, Kotlin/Compose build, JNI packaged in APK.
 3. Physical phone: create/edit/save; airplane mode; force-stop/relaunch; screen rotation with unsaved text; alert on unsaved back; confirm saved content is unchanged after restart.
-4. Separate later work: debounced autosave, local recovery journal, search, stable signing for in-place APK upgrades, device telemetry, older API behavior.
+4. Separate later work: crash-durable recovery journal, stable signing for in-place APK upgrades, device telemetry, older API behavior.
 
 ## Known limitations
-- Manual **Save** is required. An unsaved draft can be lost if Android kills the process: the UI displays an unsaved warning. Do not call this fully crash-resilient autosave.
+- Auto-save starts after 1.2 seconds without typing, or the user can press **Save**. Edits can still be lost if Android kills the process before the verified file+history result. No crash-durable draft journal or operation receipt exists.
 - Emulator proof: [GitHub Actions #39852740106](https://github.com/HeisLuka/mobakula/actions/runs/39852740106), Android API 35 x86_64, `NativeNotesRoundTripTest` **1/1 passed, 0 failed**. Android runtime loaded JNI; File Gate created, edited, read and listed a note, refused stale hashes, and verified no INTERNET permission.
 - Slow emulator smoke is **manual opt-in**, Actions → Mobile gate → Run workflow → `android_runtime=true`; normal PR/push jobs do not run an emulator. The third-party action is pinned to an immutable commit.
 - Physical Android handset acceptance is still pending: no proof yet for process death, update signing, battery or long-term note history.
@@ -43,6 +43,16 @@
 - The spinner disables editing while one File Gate write is in progress, preventing an old response from overwriting newer text.
 - **Limit:** unsaved keystrokes may be lost if Android force-stops the process during the debounce window or while the write is in flight. A `VERIFIED` save is needed before the force-stop test; this is not an always-durable recovery journal.
 - Unit tests assert one save after inactivity, cancellation on new typing/manual action, and fail-closed handling of uncertain history. The physical phone still requires explicit QA for background/rotation/force-stop and stable signing.
+
+## M1 — cold process restart, isolated opt-in runtime probe
+
+- The app/debug and androidTest APKs must **both** be installed on a test Android device (same signing identity). The probe never uninstalls, clears app data, or touches the real note root.
+- For a local/physical device with ADB enabled, run `python3 scripts/android/cold_reopen_probe.py --ack-force-stop` (add `--serial DEVICE_ID` if needed). This explicitly force-stops Akula, so do not run while editing important notes.
+- Phase 1 launches an instrumentation process, opens a dedicated directory under `noBackupFilesDir`, creates and saves a Unicode/Markdown note through JNI/File Gate, and atomically records its ID, BLAKE3 hash, content and process PID.
+- The runner force-stops the target app. Phase 2 starts a **new process**, asserts a different PID, opens the same dedicated vault, reads and compares the saved content/hash, checks list inclusion, and rejects a stale-hash overwrite.
+- Each phase must return exactly `OK (1 test)`. The normal instrumented suite skips both test stages without the explicit `akula_cold_phase` argument, so it cannot accidentally claim a cold restart from an in-process test.
+- The workflow's manual opt-in `android_runtime=true` now runs the standard Android JNI smoke followed by this two-phase check on an API 35 x86_64 emulator. Ordinary PR/push CI only **compiles** the instrumentation APK; it does not prove process restart.
+- This tests saved-note recovery only. Unsaved text before the debounce or a lost post-write acknowledgment, Android upgrade signing, and power-loss durability remain outside this probe. Physical handset PASS must be recorded separately.
 
 ## Signed update acceptance (manual)
 
