@@ -290,7 +290,7 @@ private fun NotesEditor(
     }
 
     fun format(command: MarkdownCommand) {
-        if (state.busy) return
+        if (state.busy || state.imeComposing) return
         val updated = applyMarkdownCommand(editor, command)
         if (updated.text != editor.text) editHistory.record(editor, updated)
         editor = updated
@@ -302,7 +302,7 @@ private fun NotesEditor(
     }
 
     fun restore(value: TextFieldValue?) {
-        if (state.busy || value == null) return
+        if (state.busy || state.imeComposing || value == null) return
         editor = value
         if (value.text != state.draft || (value.composition != null) != state.imeComposing) {
             state.update(value.text, composing = value.composition != null)
@@ -357,20 +357,20 @@ private fun NotesEditor(
         ) {
             AssistChip(
                 onClick = { restore(editHistory.undo(editor)) },
-                enabled = !state.busy && editHistory.canUndo,
+                enabled = !state.busy && !state.imeComposing && editHistory.canUndo,
                 label = { Text("↶", style = MaterialTheme.typography.labelLarge) },
                 modifier = Modifier.semantics { contentDescription = "Отменить изменение" },
             )
             AssistChip(
                 onClick = { restore(editHistory.redo(editor)) },
-                enabled = !state.busy && editHistory.canRedo,
+                enabled = !state.busy && !state.imeComposing && editHistory.canRedo,
                 label = { Text("↷", style = MaterialTheme.typography.labelLarge) },
                 modifier = Modifier.semantics { contentDescription = "Повторить изменение" },
             )
             MarkdownCommand.entries.forEach { command ->
                 AssistChip(
                     onClick = { format(command) },
-                    enabled = !state.busy,
+                    enabled = !state.busy && !state.imeComposing,
                     label = { Text(command.glyph, style = MaterialTheme.typography.labelLarge) },
                     modifier = Modifier.semantics {
                         contentDescription = command.description
