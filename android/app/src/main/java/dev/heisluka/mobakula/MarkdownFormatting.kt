@@ -10,6 +10,7 @@ internal enum class MarkdownCommand(val glyph: String, val description: String) 
     HEADING("H1", "Заголовок"),
     BULLET("•", "Маркированный список"),
     CHECKBOX("☐", "Чекбокс"),
+    TASK_DONE("✓", "Отметить выполнение задачи"),
     LINK("↗", "Ссылка"),
 }
 
@@ -22,6 +23,7 @@ internal fun applyMarkdownCommand(
     MarkdownCommand.HEADING, MarkdownCommand.BULLET, MarkdownCommand.CHECKBOX ->
         editLinePrefixes(editor, command)
     MarkdownCommand.LINK -> insertLink(editor)
+    MarkdownCommand.TASK_DONE -> toggleTaskCompletion(editor)
 }
 
 private fun wrapSelection(editor: TextFieldValue, marker: String): TextFieldValue {
@@ -81,7 +83,8 @@ private fun selectedLines(text: String, selection: TextRange): List<SelectedLine
     val from = selection.min.coerceIn(0, text.length)
     val to = selection.max.coerceIn(from, text.length)
     val last = if (to > from && text[to - 1] == '\n') to - 1 else to
-    var start = text.lastIndexOf('\n', (from - 1).coerceAtLeast(0)) + 1
+    // A caret on the first empty line must not skip that line.
+    var start = if (from == 0) 0 else text.lastIndexOf('\n', from - 1) + 1
     val lines = mutableListOf<SelectedLine>()
     while (true) {
         val newline = text.indexOf('\n', start)
@@ -100,6 +103,22 @@ private fun taskPrefix(line: String): String? = when {
     line.startsWith("- [x] ") -> "- [x] "
     line.startsWith("- [X] ") -> "- [X] "
     else -> null
+}
+
+private fun toggleTaskCompletion(editor: TextFieldValue): TextFieldValue {
+    val tasks = selectedLines(editor.text, editor.selection)
+        .filter { taskPrefix(it.content) != null }
+    if (tasks.isEmpty()) return editor
+    val allDone = tasks.all {
+        it.content.startsWith("- [x] ") || it.content.startsWith("- [X] ")
+    }
+    val next = if (allDone) "- [ ] " else "- [x] "
+    var updated = editor.text
+    // All task markers have the same UTF-16 length; caret offsets stay valid.
+    tasks.asReversed().forEach { line ->
+        updated = updated.replaceRange(line.offset, line.offset + 6, next)
+    }
+    return editor.copy(text = updated, composition = null)
 }
 
 private fun editLinePrefixes(editor: TextFieldValue, command: MarkdownCommand): TextFieldValue {

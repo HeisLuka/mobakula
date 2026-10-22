@@ -266,6 +266,8 @@ private fun NotesEditor(
     var editor by rememberSaveable(state.opened?.id, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(state.draft))
     }
+    // One bounded undo history per opened note. Rust HistoryService remains durable.
+    val editHistory = remember(state.opened?.id) { DraftEditHistory() }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val keyboardVisible = WindowInsets.isImeVisible
@@ -273,6 +275,7 @@ private fun NotesEditor(
         // File Gate may normalize a saved text or Discard may restore content.
         // Do not reset the current caret on a selection-only IME event.
         if (editor.text != state.draft) {
+            editHistory.clear()
             val length = state.draft.length
             editor = editor.copy(
                 text = state.draft,
@@ -288,8 +291,17 @@ private fun NotesEditor(
     fun format(command: MarkdownCommand) {
         if (state.busy) return
         val updated = applyMarkdownCommand(editor, command)
+        if (updated.text != editor.text) editHistory.record(editor, updated)
         editor = updated
         if (updated.text != state.draft) state.update(updated.text)
+        focusRequester.requestFocus()
+        keyboardController?.show()
+    }
+
+    fun restore(value: TextFieldValue?) {
+        if (state.busy || value == null) return
+        editor = value
+        if (value.text != state.draft) state.update(value.text)
         focusRequester.requestFocus()
         keyboardController?.show()
     }
@@ -317,6 +329,7 @@ private fun NotesEditor(
             onValueChange = { next ->
                 // Ignore a late IME callback while File Gate is saving.
                 if (!state.busy) {
+                    if (next.text != editor.text) editHistory.record(editor, next)
                     editor = next
                     if (next.text != state.draft) state.update(next.text)
                 }
@@ -333,6 +346,18 @@ private fun NotesEditor(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            AssistChip(
+                onClick = { restore(editHistory.undo(editor)) },
+                enabled = !state.busy && editHistory.canUndo,
+                label = { Text("↶", style = MaterialTheme.typography.labelLarge) },
+                modifier = Modifier.semantics { contentDescription = "Отменить изменение" },
+            )
+            AssistChip(
+                onClick = { restore(editHistory.redo(editor)) },
+                enabled = !state.busy && editHistory.canRedo,
+                label = { Text("↷", style = MaterialTheme.typography.labelLarge) },
+                modifier = Modifier.semantics { contentDescription = "Повторить изменение" },
+            )
             MarkdownCommand.entries.forEach { command ->
                 AssistChip(
                     onClick = { format(command) },
