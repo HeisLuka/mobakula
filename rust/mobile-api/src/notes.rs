@@ -30,13 +30,20 @@ pub struct NoteSummary {
 pub struct NotesError {
     pub code: &'static str,
     pub message: String,
+    /// Present when the primary file may already exist despite an error.
+    pub note_id: Option<String>,
 }
 impl NotesError {
     fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self { code, message: message.into(), note_id: None }
     }
     fn io(error: impl std::fmt::Display) -> Self {
         Self::new("io", error.to_string())
+    }
+
+    fn with_note_id(mut self, id: &str) -> Self {
+        self.note_id = Some(id.to_owned());
+        self
     }
 }
 
@@ -138,13 +145,34 @@ impl NoteVault {
 
     pub fn create(&self, content: &str) -> Result<Note, NotesError> {
         Self::check_content(content)?;
+        // HistoryService observes normalized text; publish identical bytes
+        // to both primary File Gate and version snapshots.
+        let content = document::normalize_line_endings(content.to_owned());
         self.begin_write()?;
         let id = Uuid::new_v4().to_string();
         let path = self.path(&id)?;
-        gate::create(&self.core, &path, content, Source::Me, None)
-            .map_err(gate_error)?;
-        self.verify_history(&path)?;
-        self.read(&id)
+        let published = match gate::create(&self.core, &path, &content, Source::Me, None) {
+            Ok(published) => published,
+            Err(cause) => {
+                let failure = gate_error(cause);
+                // A rejected preflight may not have created a note.
+                return Err(if path.is_file() {
+                    failure.with_note_id(&id)
+                } else {
+                    failure
+                });
+            }
+        };
+        self.verify_history(&path)
+            .map_err(|cause| cause.with_note_id(&id))?;
+        let note = self.read(&id).map_err(|cause| cause.with_note_id(&id))?;
+        if note.hash != published.hash ||
+            note.content != content {
+            return Err(NotesError::new("uncertain",
+                "Created bytes changed before readback; inspect note before retry")
+                .with_note_id(&id));
+        }
+        Ok(note)
     }
 
     pub fn read(&self, id: &str) -> Result<Note, NotesError> {
@@ -157,15 +185,27 @@ impl NoteVault {
         -> Result<Note, NotesError>
     {
         Self::check_content(content)?;
+        let content = document::normalize_line_endings(content.to_owned());
         if expected_hash.len() != 64 || !expected_hash.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(NotesError::new("invalid_hash", "Expected BLAKE3 hash is required"));
         }
         let path = self.check_note(id)?;
         self.begin_write()?;
-        gate::write(&self.core, &path, content, Some(expected_hash), Source::Me, None)
-            .map_err(gate_error)?;
-        self.verify_history(&path)?;
-        self.read(id)
+        let published = gate::write(&self.core, &path, &content, Some(expected_hash), Source::Me, None)
+            .map_err(|cause| {
+                let cause = gate_error(cause);
+                if cause.code == "uncertain" { cause.with_note_id(id) } else { cause }
+            })?;
+        self.verify_history(&path)
+            .map_err(|cause| cause.with_note_id(id))?;
+        let note = self.read(id).map_err(|cause| cause.with_note_id(id))?;
+        if note.hash != published.hash ||
+            note.content != content {
+            return Err(NotesError::new("uncertain",
+                "Saved bytes changed before readback; inspect note before retry")
+                .with_note_id(id));
+        }
+        Ok(note)
     }
 
     pub fn list(&self) -> Result<Vec<NoteSummary>, NotesError> {
@@ -210,6 +250,61 @@ mod tests {
         drop(vault);
         let reopened = NoteVault::open(dir.path()).unwrap();
         assert_eq!(reopened.read(&saved.id).unwrap().content, "# Изменено\nТекст 🦈\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn history_failure_preserves_created_file_identity_for_recovery() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = NoteVault::open(dir.path()).unwrap();
+        // A readable but unwritable history root still allows the primary
+        // File Gate write, but the subsequent version snapshot cannot commit.
+        let history_root = vault.notes.join(".aquilum").join("history");
+        fs::create_dir_all(&history_root).unwrap();
+        let original = fs::metadata(&history_root).unwrap().permissions();
+        fs::set_permissions(&history_root, fs::Permissions::from_mode(0o500)).unwrap();
+        let probe = history_root.join("write-probe");
+        if fs::create_dir(&probe).is_ok() {
+            // Privileged test runners can bypass directory mode bits.
+            fs::remove_dir(&probe).unwrap();
+            fs::set_permissions(&history_root, original).unwrap();
+            return;
+        }
+        let attempt = vault.create("# Primary exists despite history failure");
+        fs::set_permissions(&history_root, original).unwrap();
+        let error = attempt.unwrap_err();
+        assert_eq!(error.code, "uncertain", "{error:?}");
+        let id = error.note_id.expect("published note must retain its ID");
+        assert_eq!(vault.read(&id).unwrap().content,
+            "# Primary exists despite history failure");
+        assert!(vault.list().unwrap().iter().any(|entry| entry.id == id),
+            "a failed history write must not hide the published note");
+    }
+
+    #[test]
+    fn invalid_history_root_denies_before_creating_primary_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = NoteVault::open(dir.path()).unwrap();
+        let invalid_root = vault.notes.join(".aquilum").join("history-moves");
+        if invalid_root.is_dir() {
+            fs::remove_dir_all(&invalid_root).unwrap();
+        }
+        fs::create_dir_all(invalid_root.parent().unwrap()).unwrap();
+        fs::write(&invalid_root, b"not a directory").unwrap();
+        let error = vault.create("# Do not publish").unwrap_err();
+        assert!(error.note_id.is_none(), "pre-admission failures have no saved note ID");
+        assert!(!vault.list().unwrap().iter().any(|n| n.title == "Do not publish"));
+    }
+
+    #[test]
+    fn readback_accepts_core_line_ending_normalization() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = NoteVault::open(dir.path()).unwrap();
+        let note = vault.create("# Heading\r\nBody\r\n").unwrap();
+        assert_eq!(note.content, "# Heading\nBody\n");
+        let saved = vault.save(&note.id, &note.hash, "New\r\nText").unwrap();
+        assert_eq!(saved.content, "New\nText");
     }
 
     #[test]
