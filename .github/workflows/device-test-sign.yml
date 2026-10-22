@@ -50,6 +50,10 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "Only main can sign"; exit 1; }
           [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]] || { echo "Invalid source run ID"; exit 1; }
+          CURRENT_MAIN_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          [[ "$CURRENT_MAIN_SHA" == "$GITHUB_SHA" ]] || {
+            echo "Refused stale signing dispatch: workflow SHA is not current protected main"; exit 1;
+          }
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > "$RUNNER_TEMP/source-run.json"
           SOURCE_CODE=$(python3 scripts/ci/device_sign_source.py validate-run \
             "$RUNNER_TEMP/source-run.json" "$GITHUB_SHA" "$GITHUB_REPOSITORY")
@@ -125,6 +129,7 @@ jobs:
           {
             echo "source_run_id=$SOURCE_RUN_ID"
             echo "source_commit=$GITHUB_SHA"
+            echo "input_debug_apk_sha256=$(sha256sum "$RUNNER_TEMP/incoming/app-debug.apk" | cut -d' ' -f1)"
             echo "application_id=dev.heisluka.mobakula"
             echo "version_code=$SOURCE_CODE"
             echo "signer_cert_sha256=$ACTUAL"
