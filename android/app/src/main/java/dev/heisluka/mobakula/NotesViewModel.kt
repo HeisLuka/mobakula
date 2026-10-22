@@ -24,8 +24,15 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var info by mutableStateOf<String?>(null)
         private set
+    var pendingCreateId by mutableStateOf<String?>(null)
+        private set
+    private var saveEvidence by mutableStateOf(NoteSaveEvidence.FILE_READ)
+    private val unresolvedHistoryNotes = mutableSetOf<String>()
 
     val dirty: Boolean get() = opened?.content != draft && opened != null
+    val saveStatus: String get() = noteSaveStatus(dirty, saveEvidence)
+    val canSave: Boolean get() = canSaveNote(dirty, saveEvidence)
+    val needsReview: Boolean get() = saveEvidence == NoteSaveEvidence.NEEDS_REVIEW
 
     init {
         viewModelScope.launch {
@@ -50,14 +57,21 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
                 block()
             } catch (cause: Exception) {
                 info = null
-                // A primary create can succeed while HistoryService fails.
-                // Recover the existing ID rather than inviting another create.
+                // An uncertain create may already exist on disk. Never display
+                // it as fully saved just because the recovered text is clean.
                 val affected = (cause as? NoteFailure)?.noteId
-                if (affected != null && opened == null) {
-                    val recovered = runCatching { repository.read(affected) }.getOrNull()
-                    if (recovered != null) {
-                        opened = recovered
-                        draft = recovered.content
+                if (affected != null) {
+                    unresolvedHistoryNotes.add(affected)
+                    if (opened == null) {
+                        pendingCreateId = affected
+                        val recovered = runCatching { repository.read(affected) }.getOrNull()
+                        if (recovered != null) {
+                            opened = recovered
+                            draft = recovered.content
+                        }
+                    }
+                    if (opened?.id == affected) {
+                        saveEvidence = NoteSaveEvidence.NEEDS_REVIEW
                     }
                 }
                 error = if (affected != null) {
@@ -75,26 +89,46 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun create() = task {
+        preventDuplicateCreate()
         val created = repository.create()
         opened = created
         draft = created.content
+        saveEvidence = NoteSaveEvidence.VERIFIED
         headers = repository.list()
-        info = "Заметка создана и записана"
+        info = "Заметка создана; файл и история проверены"
+    }
+
+    private fun preventDuplicateCreate() {
+        if (pendingCreateId != null) {
+            throw NoteFailure("needs_review",
+                "Сначала проверьте существующую заметку $pendingCreateId; повторное создание может дать дубль.")
+        }
     }
 
     fun open(id: String) = task {
         val note = repository.read(id)
         opened = note
         draft = note.content
+        saveEvidence = if (id in unresolvedHistoryNotes) {
+            NoteSaveEvidence.NEEDS_REVIEW
+        } else {
+            NoteSaveEvidence.FILE_READ
+        }
         info = null
     }
 
+    fun inspectPendingCreate() {
+        pendingCreateId?.let(::open)
+    }
+
     fun importFile(uri: Uri) = task {
+        preventDuplicateCreate()
         val created = repository.importFile(uri)
         opened = created
         draft = created.content
+        saveEvidence = NoteSaveEvidence.VERIFIED
         headers = repository.list()
-        info = "Файл импортирован как отдельная заметка Акулы"
+        info = "Файл импортирован; запись и история проверены"
     }
 
     fun exportFile(uri: Uri) = task {
@@ -111,12 +145,16 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     fun update(text: String) {
         if (!busy && opened != null) {
             draft = text
-            info = if (dirty) "Есть несохранённые изменения" else "Сохранено"
+            info = if (dirty) "Есть несохранённые изменения" else null
         }
     }
 
     fun save() = task {
         val current = opened ?: return@task
+        if (saveEvidence == NoteSaveEvidence.NEEDS_REVIEW) {
+            throw NoteFailure("needs_review",
+                "Результат предыдущей записи неоднозначен. Экспортируйте текущий файл; повторное сохранение пока запрещено.")
+        }
         if (!dirty) {
             info = "Изменений нет"
             return@task
@@ -124,8 +162,9 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         val saved = repository.save(current, draft)
         opened = saved
         draft = saved.content
+        saveEvidence = NoteSaveEvidence.VERIFIED
         headers = repository.list()
-        info = "Сохранено в Акуле"
+        info = "Файл и история проверены"
     }
 
     fun discard() {
@@ -142,6 +181,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
             error = "Сначала сохраните или отмените изменения"
         } else {
             opened = null
+            saveEvidence = NoteSaveEvidence.FILE_READ
             info = null
             error = null
         }
