@@ -312,8 +312,11 @@ private fun NotesEditor(
         OutlinedTextField(
             value = editor,
             onValueChange = { next ->
-                editor = next
-                if (next.text != state.draft) state.update(next.text)
+                // Ignore a late IME callback while File Gate is saving.
+                if (!state.busy) {
+                    editor = next
+                    if (next.text != state.draft) state.update(next.text)
+                }
             },
             modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(focusRequester),
             enabled = !state.busy,
