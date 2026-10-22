@@ -3,48 +3,49 @@ package dev.heisluka.mobakula
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
+
+private val lightColors = lightColorScheme(
+    primary = Color(0xFF086B69),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD4F2EE),
+    onPrimaryContainer = Color(0xFF094F4E),
+    background = Color(0xFFF5F8F7),
+    surface = Color.White,
+)
+
+private val darkColors = darkColorScheme(
+    primary = Color(0xFF78DDD1),
+    onPrimary = Color(0xFF0C3938),
+    primaryContainer = Color(0xFF164B4A),
+    onPrimaryContainer = Color(0xFFD2F5EF),
+    background = Color(0xFF101819),
+    surface = Color(0xFF1B2526),
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    MobileHome()
-                }
-            }
-        }
+        setContent { MobileApp() }
     }
 }
 
 @Composable
-private fun MobileHome() {
-    val nativeVersion = remember { runCatching { NativeBridge.apiVersion() }.getOrNull() }
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("Акула", style = MaterialTheme.typography.headlineMedium)
-        Text("Локальные заметки · без интернета", style = MaterialTheme.typography.titleMedium)
-        Text(
-            nativeVersion?.let { "Rust JNI: API v$it" } ?: "Ошибка загрузки Rust JNI",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        NotesScreen(modifier = Modifier.weight(1f))
-        Text(
-            "Пробная сборка: удаление приложения удаляет заметки. Сохраните копии .md перед переустановкой.",
-            style = MaterialTheme.typography.bodySmall,
-        )
+private fun MobileApp() {
+    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColors else lightColors) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+        ) {
+            NotesScreen()
+        }
     }
 }
