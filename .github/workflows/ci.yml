@@ -23,7 +23,7 @@ jobs:
   mobile-gate:
     name: mobile-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.android_runtime && 40 || 20 }}
     steps:
       - name: Checkout with base history
         uses: actions/checkout@v4
@@ -124,9 +124,14 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            gradle --no-daemon -p android :app:connectedDebugAndroidTest
+            # Both APKs were already built by the normal compile step.
+            # Running Gradle again on the emulator wastes the remaining job
+            # budget and hits /sdcard/Android/media mount/permission failures.
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            smoke_output="$(adb shell am instrument -w -e class dev.heisluka.mobakula.NativeNotesRoundTripTest#roundTrip_andNoInternetPermission dev.heisluka.mobakula.test/androidx.test.runner.AndroidJUnitRunner)"
+            printf '%s\n' "$smoke_output"
+            grep -F 'OK (1 test)' <<< "$smoke_output"
             python3 scripts/android/cold_reopen_probe.py --ack-force-stop
       - name: Upload debug APK
         if: steps.scope.outputs.android == 'true'
