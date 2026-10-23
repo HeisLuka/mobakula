@@ -69,7 +69,7 @@ def validate_bundle(bundle: Path, expected_cert: str, badge: str, signature: str
                 "signer_cert_sha256", "input_debug_apk_sha256"):
         if key not in details:
             raise PreflightError(f"Missing provenance field: {key}")
-    if not details["source_run_id"].isdigit() or not re.fullmatch(
+    if not details["source_run_id"].isdigit() or int(details["source_run_id"]) == 0 or not re.fullmatch(
             r"[a-f0-9]{40}", details["source_commit"]):
         raise PreflightError("Invalid provenance source run or commit")
     if not HEX64.fullmatch(details["input_debug_apk_sha256"]):
@@ -159,6 +159,8 @@ def main() -> int:
     args = parser.parse_args()
     try:
         apk = args.bundle / APK
+        if not apk.is_file():
+            raise PreflightError("Signed APK is missing from the bundle")
         badge = command(["aapt", "dump", "badging", str(apk)])
         sig = command(["apksigner", "verify", "--print-certs", str(apk)])
         incoming = validate_bundle(args.bundle, args.expected_cert, badge, sig)
