@@ -92,7 +92,9 @@ mod tests {
         let manifest = S3ManifestV1::new(&ns, id, 1, None, vec![]).unwrap();
         let digest = manifest.digest(&ns).unwrap();
         let head = S3HeadPointerV1::new(&ns, 1, id, &digest, None).unwrap();
-        (ns, head.encode(&ns).unwrap(), manifest.encode(&ns).unwrap())
+        let head_bytes = head.encode(&ns).unwrap();
+        let manifest_bytes = manifest.encode(&ns).unwrap();
+        (ns, head_bytes, manifest_bytes)
     }
 
     #[test]
