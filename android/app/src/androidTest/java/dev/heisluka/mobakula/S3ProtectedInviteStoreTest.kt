@@ -31,9 +31,9 @@ class S3ProtectedInviteStoreTest {
             originalPassword.fill('\u0000')
             assertTrue(store().exists())
             val onDisk = sealedFile().readBytes()
-            val ascii = String(onDisk, Charsets.ISO_8859_1)
-            assertFalse(ascii.contains("ENCRYPTED-INVITE-FIXTURE"))
-            assertFalse(ascii.contains("шифрованный"))
+            val diskText = String(onDisk, Charsets.UTF_8)
+            assertFalse(diskText.contains("ENCRYPTED-INVITE-FIXTURE"))
+            assertFalse(diskText.contains("шифрованный"))
             val freshStore = store()
             freshStore.open().use { restored ->
                 assertArrayEquals(invitation, restored.encryptedInvitation)

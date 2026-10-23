@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
+import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -59,7 +60,9 @@ internal class S3ProtectedInviteStore(context: Context, private val scope: Strin
         java.io.File(context.noBackupFilesDir, "s3-profiles/$scope.sealed")
     )
 
-    fun exists(): Boolean = synchronized(LOCK) { atomic.baseFile.exists() }
+    fun exists(): Boolean = synchronized(LOCK) {
+        atomic.baseFile.exists() || java.io.File(atomic.baseFile.path + ".bak").exists()
+    }
 
     private fun keystore(): KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
@@ -89,7 +92,7 @@ internal class S3ProtectedInviteStore(context: Context, private val scope: Strin
             .onUnmappableCharacter(CodingErrorAction.REPORT)
         val buffer = encoder.encode(CharBuffer.wrap(password))
         return try {
-            ByteArray(buffer.remaining()).also(buffer::get)
+            ByteArray(buffer.remaining()).also { buffer.get(it) }
         } finally {
             if (buffer.hasArray()) buffer.array().fill(0)
         }
@@ -120,7 +123,7 @@ internal class S3ProtectedInviteStore(context: Context, private val scope: Strin
         if (length < 1 || length > max || length > buffer.remaining()) {
             throw IOException("Недопустимая длина поля S3-профиля")
         }
-        return ByteArray(length).also(buffer::get)
+        return ByteArray(length).also { buffer.get(it) }
     }
 
     private fun decodePlaintext(plaintext: ByteArray): UnsealedS3Invitation {
@@ -189,13 +192,26 @@ internal class S3ProtectedInviteStore(context: Context, private val scope: Strin
     }
 
     fun open(): UnsealedS3Invitation = synchronized(LOCK) {
-        if (!exists() || atomic.baseFile.length() !in 1..MAX_FILE.toLong()) {
-            throw IOException("Нет защищённого S3-профиля или файл повреждён")
-        }
+        if (!exists()) throw IOException("Нет защищённого S3-профиля")
+        // AtomicFile.openRead restores the last committed backup if necessary.
         val record = atomic.openRead().use { input ->
-            val result = input.readBytes()
-            if (result.size > MAX_FILE) throw IOException("Превышен размер S3-профиля")
-            result
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(2048)
+            var emptyReads = 0
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count == 0) {
+                    if (++emptyReads > 8) throw IOException("Не удалось прочитать S3-профиль")
+                    continue
+                }
+                emptyReads = 0
+                if (output.size() + count > MAX_FILE) {
+                    throw IOException("Превышен размер S3-профиля")
+                }
+                output.write(buffer, 0, count)
+            }
+            output.toByteArray()
         }
         try {
             val buffer = ByteBuffer.wrap(record)
@@ -214,7 +230,7 @@ internal class S3ProtectedInviteStore(context: Context, private val scope: Strin
                 cipher.updateAAD(AAD)
                 val clear = try {
                     cipher.doFinal(ciphertext)
-                } catch (_: javax.crypto.AEADBadTagException) {
+                } catch (_: java.security.GeneralSecurityException) {
                     throw IOException("S3-профиль не прошёл проверку целостности")
                 }
                 try {
