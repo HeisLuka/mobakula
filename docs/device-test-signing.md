@@ -31,3 +31,12 @@ Workflow fails closed if environment secrets are absent; the run is from a PR, a
 5. In airplane mode confirm exact text, note list and reopening after force-stop. Repeat saved/unsaved edit and import/export tests. Keep logs without sensitive note content.
 
 **Limitations:** a private test key in protected environment is still a valuable signing secret. Only execute this workflow from reviewed main, with minimal permissions. These are not production/store builds; future Google Play or RuStore keys may be different. The signed test APK can be installed on multiple Android devices but has no store update channel.
+
+## Physical Android preflight
+
+Before installing a device-test signed APK on an ARM64 handset, run the **read-only**
+[physical Alpha preflight](physical-alpha-preflight.md). It compares the signed
+artifact against the owner's separately approved certificate fingerprint and, if
+Akula is already installed, checks signing identity and increasing versionCode
+without modifying the application. The phone acceptance checklist is in that
+document. A PASS from this preflight alone is not physical UI acceptance.
