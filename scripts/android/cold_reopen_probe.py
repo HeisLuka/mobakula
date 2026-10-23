@@ -84,6 +84,8 @@ def main() -> int:
                 ("prepare", "prepareNoteThroughUi", "ui_prepared"),
                 ("verify", "reopenNoteThroughUi", "ui_verified"),
                 ("recreate", "recreateActivityRetainsPendingDraftAndResumesAutoSave", "ui_recreated"),
+                ("recovery_prepare", "prepareUnsavedDraftForColdRecovery", "ui_recovery_prepared"),
+                ("recovery_verify", "recoverDraftInNewProcessWithoutOverwritingFile", "ui_recovery_verified"),
             ):
                 run("shell", "am", "force-stop", APP, timeout=30)
                 output = run(
@@ -95,6 +97,7 @@ def main() -> int:
                 print(f"PASS: Compose UI {phase}", flush=True)
             print("PASS: UI create, edit, save and reopen across Android processes", flush=True)
             print("PASS: unsaved editor retained after Activity recreation; autosave resumed", flush=True)
+            print("PASS: unsaved Unicode draft offered and restored across process restart", flush=True)
         return 0
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as cause:
         print(f"FAIL: {cause}", file=sys.stderr)
