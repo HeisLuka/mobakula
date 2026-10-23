@@ -17,6 +17,7 @@ TEST_APP = APP + ".test"
 RUNNER = TEST_APP + "/androidx.test.runner.AndroidJUnitRunner"
 CLASS = APP + ".ColdReopenTwoProcessTest"
 SMOKE_CLASS = APP + ".NativeNotesRoundTripTest#roundTrip_andNoInternetPermission"
+STARTUP_CLASS = APP + ".AndroidStartupProbeTest#instrumentedAppStartsWithoutNativeCalls"
 
 
 def verify_instrumentation(output: str, *, receipt: str | None = None) -> None:
@@ -35,6 +36,8 @@ def main() -> int:
                         help="I consent to force-stopping the running test app")
     parser.add_argument("--include-smoke", action="store_true",
                         help="Also run JNI/Core smoke in the separate no-backup test vault")
+    parser.add_argument("--include-preflight", action="store_true",
+                        help="Run minimal instrumentation without JNI before JNI/Core smoke")
     args = parser.parse_args()
     if not args.ack_force_stop:
         parser.error("Pass --ack-force-stop; this interrupts the test app.")
@@ -55,7 +58,15 @@ def main() -> int:
             if "package:" not in run("shell", "pm", "path", package, timeout=30):
                 raise RuntimeError(f"{package} not installed: install matching app/androidTest APKs first")
 
+        if args.include_preflight:
+            print("PROBE: JVM-only Android instrumentation startup", flush=True)
+            starter = run("shell", "am", "instrument", "-w",
+                          "-e", "class", STARTUP_CLASS, RUNNER, timeout=300)
+            verify_instrumentation(starter)
+            print("PASS: Android instrumentation startup without JNI", flush=True)
+
         if args.include_smoke:
+            print("PROBE: Kotlin -> JNI -> Core File Gate", flush=True)
             smoke = run("shell", "am", "instrument", "-w",
                         "-e", "class", SMOKE_CLASS, RUNNER, timeout=300)
             verify_instrumentation(smoke)
@@ -83,6 +94,8 @@ def main() -> int:
         if "Process crashed." in str(cause):
             for command in (
                 ("logcat", "-b", "crash", "-d", "-t", "180", "-v", "threadtime"),
+                ("logcat", "-b", "main", "-b", "system", "-b", "events", "-d", "-t", "300",
+                 "-v", "threadtime"),
                 ("shell", "dumpsys", "activity", "exit-info", APP),
             ):
                 try:
