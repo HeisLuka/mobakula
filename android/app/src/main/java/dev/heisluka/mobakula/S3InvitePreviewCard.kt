@@ -101,7 +101,7 @@ internal fun S3InvitePreviewCard() {
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Button(enabled = !busy && password.length >= 20, onClick = {
+                Button(enabled = !busy && password.isNotEmpty(), onClick = {
                     val temporary = password.toCharArray()
                     password = ""
                     busy = true

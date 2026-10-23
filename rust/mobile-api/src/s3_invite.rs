@@ -92,6 +92,17 @@ mod tests {
     }
 
     #[test]
+    fn utf8_password_is_bounded_by_core_bytes_not_android_char_count() {
+        let source = desktop_invite();
+        let password = "пароль-для-связки";
+        assert!(password.chars().count() < 20);
+        assert!(password.len() >= 20);
+        let encrypted = seal_s3_pair_invite(&source, password).unwrap();
+        assert_eq!(inspect_untrusted_s3_invite(&encrypted, password)
+            .unwrap().cloud_vault_id, source.cloud_vault_id.to_string());
+    }
+
+    #[test]
     fn oversized_or_truncated_invitation_never_yields_preview() {
         let encrypted = seal_s3_pair_invite(&desktop_invite(), PASSWORD).unwrap();
         let mut excessive = encrypted.clone();
