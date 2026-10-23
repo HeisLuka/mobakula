@@ -33,3 +33,6 @@ pub mod s3_trust;
 
 /// Short-lived SigV4 GET/HEAD signatures scoped to one authenticated Yandex invite.
 pub mod s3_readonly;
+
+/// Strict sharded index proof; never a remote owner or File Gate permit.
+pub mod s3_index;

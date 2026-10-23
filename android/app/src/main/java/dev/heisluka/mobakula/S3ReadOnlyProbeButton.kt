@@ -49,6 +49,8 @@ internal fun S3ReadOnlyProbeButton(store: S3ProtectedInviteStore, enabled: Boole
             Text(
                 "Цепочка S3 прочитана: поколение " + result.latestGeneration +
                     ", манифестов " + result.manifestsChecked +
+                    ", проверено наборов " + result.validatedShards +
+                    ", документов " + result.distinctDocumentIds +
                     ". Владелец сервера отдельно не подтверждён. " +
                     "Синхронизация заметок не включена.",
                 style = MaterialTheme.typography.bodySmall,

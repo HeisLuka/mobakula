@@ -9,6 +9,7 @@ use mobakula_mobile_api::s3_readonly::{
     EMPTY_SHA256, S3ReadObject, S3ReadSigner, parse_manifest_id,
 };
 use mobakula_mobile_api::s3_trust::check_untrusted_genesis_chain;
+use mobakula_mobile_api::s3_index::inspect_untrusted_sharded_index;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::{Value, json};
 use std::{ptr, sync::{Mutex, OnceLock}, time::{Duration, Instant}};
@@ -18,6 +19,8 @@ const MAX_INVITE: usize = 16 * 1024;
 const MAX_PASSWORD: usize = 1024;
 const MAX_MANIFESTS: usize = 128;
 const MAX_MANIFEST_BYTES: usize = 512 * 1024;
+const MAX_INDEX_SHARDS: usize = 16;
+const MAX_INDEX_SHARD_BYTES: usize = 128 * 1024;
 const MAX_CHAIN_BYTES: usize = 8 * 1024 * 1024;
 const MAX_READ_SIGNATURES: usize = 640;
 const SESSION_TTL: Duration = Duration::from_secs(180);
@@ -27,6 +30,7 @@ struct Session {
     signer: S3ReadSigner,
     expires_at: Instant,
     signatures: usize,
+    ancestry_head_sha256: Option<[u8;32]>,
 }
 static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
 
@@ -101,6 +105,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_beginS3ReadProbe(
         *guard = Some(Session {
             id, signer, expires_at: Instant::now() + SESSION_TTL,
             signatures: 0,
+            ancestry_head_sha256: None,
         });
         Ok::<Value, &'static str>(json!({"ok":true,"data":scope}))
     }));
@@ -175,10 +180,67 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3ReadProbe
                 slot.signer.prefix(), &slot.signer.cloud_vault_id(),
                 slot.signer.genesis_fingerprint(), &head, &slices,
             ).map_err(|_| "invalid_ancestry")?;
+            // The index viewer must use the exact root that passed ancestry.
+            let digest = ring::digest::digest(&ring::digest::SHA256, &head);
+            let mut identity = [0u8;32];
+            identity.copy_from_slice(digest.as_ref());
+            slot.ancestry_head_sha256 = Some(identity);
             Ok(json!({"ok":true,"data":{
                 "generation":proof.latest_generation,
                 "revisions":proof.latest_revisions,
                 "manifestsChecked":proof.immutable_manifests_checked,
+                "bytesOnly":true,"remoteOwnerVerified":false,"synced":false
+            }}))
+        })
+    }));
+    result_string(env, match response {
+        Ok(Ok(value)) => value, Ok(Err(code)) => fault(code),
+        Err(_) => fault("panic"),
+    })
+}
+
+/// Strict read-only index verification; requires an ancestry proof in this
+/// same native session for exactly the same head bytes. No File Gate writes.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3IndexProbe(
+    mut env: JNIEnv, _receiver: JClass,
+    token: JString, head: JByteArray, latest: JByteArray, shards: JObjectArray,
+) -> jstring {
+    let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let id = jtext(&mut env, &token)?;
+        let head = read_array(&env, &head, 4096)?;
+        let newest = read_array(&env, &latest, MAX_MANIFEST_BYTES)?;
+        let count = env.get_array_length(&shards).map_err(|_| "jni")? as usize;
+        if count > MAX_INDEX_SHARDS { return Err("too_many_shards"); }
+        let mut payload = Vec::with_capacity(count);
+        let mut total = 0usize;
+        for i in 0..count {
+            let item = env.get_object_array_element(&shards, i as i32)
+                .map_err(|_| "jni")?;
+            let array = JByteArray::from(item);
+            let bytes = read_array(&env, &array, MAX_INDEX_SHARD_BYTES)?;
+            total = total.checked_add(bytes.len()).ok_or("shard_bounds")?;
+            if total > MAX_INDEX_SHARD_BYTES * MAX_INDEX_SHARDS {
+                return Err("shard_bounds");
+            }
+            payload.push(bytes);
+        }
+        with_session(&id, |session| {
+            let digest = ring::digest::digest(&ring::digest::SHA256, &head);
+            if session.ancestry_head_sha256.as_ref().map(|x| x.as_slice())
+                != Some(digest.as_ref())
+            {
+                return Err("unverified_head");
+            }
+            let slices: Vec<&[u8]> = payload.iter().map(Vec::as_slice).collect();
+            let index = inspect_untrusted_sharded_index(
+                session.signer.prefix(), &session.signer.cloud_vault_id(),
+                &head, &newest, &slices,
+            ).map_err(|_| "invalid_sharded_index")?;
+            Ok(json!({"ok":true,"data":{
+                "revisions":index.revisions,
+                "documents":index.distinct_document_ids,
+                "shardsChecked":index.shards_checked,
                 "bytesOnly":true,"remoteOwnerVerified":false,"synced":false
             }}))
         })
