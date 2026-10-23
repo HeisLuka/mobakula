@@ -6,7 +6,7 @@
 use std::str::FromStr;
 use aquilum_core::sync::{OperationId, S3Keyspace};
 use aquilum_core::sync::s3_pair_invite::{
-    open_s3_pair_invite, PairInviteError, S3PairInvite,
+    open_s3_pair_invite, S3PairInvite,
 };
 use ring::{digest, hmac};
 use zeroize::Zeroize;
@@ -153,17 +153,22 @@ impl S3ReadSigner {
         let mut seed = Vec::with_capacity(4 + self.invite.secret_access_key.len());
         seed.extend_from_slice(b"AWS4");
         seed.extend_from_slice(self.invite.secret_access_key.as_bytes());
-        let date_key = mac(&seed, date.as_bytes());
+        let mut date_key = mac(&seed, date.as_bytes());
         seed.zeroize();
-        let region_key = mac(&date_key, REGION.as_bytes());
-        let service_key = mac(&region_key, b"s3");
-        let signing_key = mac(&service_key, b"aws4_request");
-        let signature = mac(&signing_key, to_sign.as_bytes());
+        let mut region_key = mac(&date_key, REGION.as_bytes());
+        date_key.zeroize();
+        let mut service_key = mac(&region_key, b"s3");
+        region_key.zeroize();
+        let mut signing_key = mac(&service_key, b"aws4_request");
+        service_key.zeroize();
+        let mut signature = mac(&signing_key, to_sign.as_bytes());
+        signing_key.zeroize();
         let authorization = format!(
             "AWS4-HMAC-SHA256 Credential={}/{},SignedHeaders={},Signature={}",
             self.invite.access_key_id, credential_scope, signed_headers,
             hex_lower(&signature),
         );
+        signature.zeroize();
         Ok(S3SignedRead {
             url: format!("https://{HOST}{path}"),
             method: verb,
@@ -234,8 +239,12 @@ mod tests {
             "https://{HOST}/akula-demo/akula-sync/pair/v1/vaults/{}/refs/current.json",
             signer.cloud_vault_id()
         ));
-        assert!(signed.authorization.starts_with(
-            "AWS4-HMAC-SHA256 Credential=test-key-123/20261024/ru-central1/s3/aws4_request,"
+        // Independently derived with Python stdlib hmac/hashlib using the
+        // AWS documented canonical-request algorithm, not this Rust signer.
+        assert_eq!(signed.authorization, concat!(
+            "AWS4-HMAC-SHA256 Credential=test-key-123/20261024/ru-central1/s3/aws4_request,",
+            "SignedHeaders=host;x-amz-content-sha256;x-amz-date,",
+            "Signature=cd52465c07d8f8aa81958a25507d25d1a4629166d2946b4a8229c1ed4a9e9711"
         ));
         assert!(!signed.authorization.contains("test-secret"));
         assert!(!signed.authorization.contains('\n'));
