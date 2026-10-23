@@ -20,3 +20,7 @@ pub fn file_gate_contract() -> &'static str {
 }
 
 pub mod notes;
+
+/// Read-only structural compatibility with the desktop S3 contract.
+/// This module cannot authenticate or apply remote data.
+pub mod s3_contract;
