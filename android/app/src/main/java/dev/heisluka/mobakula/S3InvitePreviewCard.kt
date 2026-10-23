@@ -208,6 +208,7 @@ internal fun S3InvitePreviewCard() {
                     }) { Text("Проверить и сохранить") }
                 }
             } else {
+                S3ReadOnlyProbeButton(store, enabled = !busy && preview != null)
                 Text("Конфигурация сохранена локально. Для замены сначала удалите её.",
                     style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(enabled = !busy, onClick = { confirmDelete = true }) {
