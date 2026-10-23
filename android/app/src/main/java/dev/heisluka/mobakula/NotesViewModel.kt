@@ -38,6 +38,8 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var draftCheckpointReady by mutableStateOf(false)
         private set
+    // "Later" preserves the older backup rather than overwriting it.
+    private var preservedRecoveryId: String? = null
     var imeComposing by mutableStateOf(false)
         private set
 
@@ -111,6 +113,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         checkpointIdle.cancel()
         draftStore.invalidate()
         recoveredDraft = null
+        preservedRecoveryId = null
         draftCheckpointReady = false
         preventDuplicateCreate()
         val created = repository.create()
@@ -133,6 +136,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         checkpointIdle.cancel()
         draftStore.invalidate()
         recoveredDraft = null
+        preservedRecoveryId = null
         draftCheckpointReady = false
         val note = repository.read(id)
         opened = note
@@ -170,6 +174,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         checkpointIdle.cancel()
         draftStore.invalidate()
         recoveredDraft = null
+        preservedRecoveryId = null
         draftCheckpointReady = false
         preventDuplicateCreate()
         val created = repository.importFile(uri)
@@ -212,7 +217,9 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
             draftStore.invalidate()
             checkpointIdle.cancel()
             draftCheckpointReady = false
-            if (dirty && !imeComposing) checkpointIdle.schedule()
+            if (dirty && !imeComposing && preservedRecoveryId != opened?.id) {
+                checkpointIdle.schedule()
+            }
             info = if (dirty) "Есть несохранённые изменения" else null
             autoSave.cancel()
             if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked, imeComposing)) {
@@ -227,7 +234,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         if (!imeComposing) return
         imeComposing = false
         autoSave.cancel()
-        if (dirty) checkpointIdle.schedule()
+        if (dirty && preservedRecoveryId != opened?.id) checkpointIdle.schedule()
         if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked, false)) {
             autoSave.schedule()
         }
@@ -236,7 +243,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     /** Debounce a local safety copy separately from File Gate verified autosave. */
     private fun checkpointAfterIdle() {
         val current = opened ?: return
-        if (!dirty || imeComposing) return
+        if (!dirty || imeComposing || preservedRecoveryId == current.id) return
         val snapshot = DraftSnapshot(current.id, current.hash, draft)
         val generation = draftStore.epoch()
         viewModelScope.launch {
@@ -257,6 +264,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissRecoveredDraft() {
+        preservedRecoveryId = recoveredDraft?.snapshot?.noteId
         recoveredDraft = null  // The on-disk copy is intentionally preserved.
     }
 
@@ -265,6 +273,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         draftStore.invalidate()
         draftStore.clearIfRevision(candidate.snapshot.noteId, candidate.snapshot.baseHash)
         recoveredDraft = null
+        preservedRecoveryId = null
         draftCheckpointReady = false
         info = "Резервная копия удалена; основной файл не изменён"
     }
@@ -283,11 +292,12 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         draft = candidate.snapshot.text
         imeComposing = false
         recoveredDraft = null
+        preservedRecoveryId = null
         draftCheckpointReady = true  // Existing checkpoint remains on disk.
         draftStore.invalidate()
         checkpointIdle.schedule()
         autoSave.cancel()
-        if (canScheduleAutoSave(dirty, busy = false, saveEvidence, autoSaveBlocked, false)) {
+        if (canScheduleAutoSave(dirty, false, saveEvidence, autoSaveBlocked, false)) {
             autoSave.schedule()
         }
         info = "Черновик восстановлен; основной файл ещё не сохранён"
@@ -325,8 +335,8 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         val snapshot = DraftSnapshot(current.id, current.hash, draft)
         // Keep a checkpoint even if File Gate fails after the attempt begins.
         // Failure to make the safety copy must not prevent a normal Core save.
-        val checkpointed = runCatching { draftStore.writeBeforeSave(snapshot) }
-            .getOrDefault(false)
+        val checkpointed = if (preservedRecoveryId == current.id) false
+            else runCatching { draftStore.writeBeforeSave(snapshot) }.getOrDefault(false)
         val saved = repository.save(current, draft)
         if (checkpointed) {
             runCatching { draftStore.clearIfRevision(current.id, current.hash) }
@@ -354,12 +364,15 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         checkpointIdle.cancel()
         draftStore.invalidate()
         // Delete only this revision's backup, never an earlier conflicting copy.
-        draftStore.clearIfRevision(current.id, current.hash)
+        if (preservedRecoveryId != current.id) {
+            draftStore.clearIfRevision(current.id, current.hash)
+        }
         draft = current.content
         autoSaveBlocked = false
         draftCheckpointReady = false
         imeComposing = false
         recoveredDraft = null
+        if (exit) preservedRecoveryId = null
         if (exit) opened = null
         info = if (exit) null else "Изменения отменены"
     }
@@ -375,6 +388,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
             autoSaveBlocked = false
             draftCheckpointReady = false
             recoveredDraft = null
+            preservedRecoveryId = null
             opened = null
             imeComposing = false
             saveEvidence = NoteSaveEvidence.FILE_READ
