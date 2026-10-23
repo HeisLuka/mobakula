@@ -9,7 +9,7 @@ name = "mobakula_mobile_api"
 path = "src/lib.rs"
 
 [dependencies]
-aquilum-core = { git = "https://github.com/Lalalalendia/Akula", rev = "58a15187b790ade76b5e70fed9342b789f3623fe", default-features = false, features = ["sync-s3-invite"] }
+aquilum-core = { git = "https://github.com/Lalalalendia/Akula", rev = "f8a562b05fad81ec6bf312fa364aab1013b4dd3f", default-features = false, features = ["sync-s3-invite"] }
 
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1.23.5", features = ["v4"] }
