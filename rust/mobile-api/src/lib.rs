@@ -36,3 +36,6 @@ pub mod s3_readonly;
 
 /// Strict sharded index proof; never a remote owner or File Gate permit.
 pub mod s3_index;
+
+/// Bounded validation of immutable revision metadata (S4a, no content import).
+pub mod s3_revisions;
