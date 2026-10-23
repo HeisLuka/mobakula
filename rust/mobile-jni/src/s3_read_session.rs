@@ -1,0 +1,220 @@
+//! Native-only short-lived credential scope for Android HEAD/GET S3 proof.
+//! Neither the ordinary note JSON API nor app-owned files store credentials.
+//! The Kotlin HTTP adapter only receives short-lived *signed requests*;
+//! this module never calls the network or marks a note as synchronized.
+
+use jni::{JNIEnv, objects::{JByteArray, JCharArray, JClass, JObjectArray, JString}};
+use jni::sys::jstring;
+use mobakula_mobile_api::s3_readonly::{
+    EMPTY_SHA256, S3ReadObject, S3ReadSigner, parse_manifest_id,
+};
+use mobakula_mobile_api::s3_trust::check_untrusted_genesis_chain;
+use ring::rand::{SecureRandom, SystemRandom};
+use serde_json::{Value, json};
+use std::{ptr, sync::{Mutex, OnceLock}, time::{Duration, Instant}};
+use zeroize::Zeroizing;
+
+const MAX_INVITE: usize = 16 * 1024;
+const MAX_PASSWORD: usize = 1024;
+const MAX_MANIFESTS: usize = 128;
+const MAX_MANIFEST_BYTES: usize = 512 * 1024;
+const MAX_CHAIN_BYTES: usize = 8 * 1024 * 1024;
+const MAX_READ_SIGNATURES: usize = 640;
+const SESSION_TTL: Duration = Duration::from_secs(180);
+
+struct Session {
+    id: String,
+    signer: S3ReadSigner,
+    expires_at: Instant,
+    signatures: usize,
+}
+static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
+
+fn session_slot() -> &'static Mutex<Option<Session>> {
+    SESSION.get_or_init(|| Mutex::new(None))
+}
+
+fn fault(code: &str) -> Value {
+    json!({"ok":false,"code":code,"message":"S3 read-only probe rejected"})
+}
+fn result_string(mut env: JNIEnv, response: Value) -> jstring {
+    env.new_string(response.to_string())
+        .map_or(ptr::null_mut(), |value| value.into_raw())
+}
+fn jtext(env: &mut JNIEnv, input: &JString) -> Result<String, &'static str> {
+    env.get_string(input).map(|s| s.to_string_lossy().into_owned())
+        .map_err(|_| "jni")
+}
+fn read_array(env: &JNIEnv, array: &JByteArray, max: usize) -> Result<Vec<u8>, &'static str> {
+    let len = env.get_array_length(array).map_err(|_| "jni")? as usize;
+    if len == 0 || len > max { return Err("too_large"); }
+    let mut signed = vec![0i8; len];
+    env.get_byte_array_region(array, 0, &mut signed).map_err(|_| "jni")?;
+    Ok(signed.iter().map(|b| *b as u8).collect())
+}
+fn password_chars(env: &JNIEnv, array: &JCharArray) -> Result<Zeroizing<String>, &'static str> {
+    let len = env.get_array_length(array).map_err(|_| "jni")? as usize;
+    if len == 0 || len > MAX_PASSWORD { return Err("too_large"); }
+    let mut utf16 = Zeroizing::new(vec![0u16; len]);
+    env.get_char_array_region(array, 0, &mut utf16).map_err(|_| "jni")?;
+    let str_value = String::from_utf16(&utf16).map_err(|_| "invalid_utf16")?;
+    Ok(Zeroizing::new(str_value))
+}
+fn new_id() -> Result<String, &'static str> {
+    let mut nonce = [0u8; 16];
+    SystemRandom::new().fill(&mut nonce).map_err(|_| "random")?;
+    let mut id = String::with_capacity(32);
+    for b in nonce { id.push_str(&format!("{b:02x}")); }
+    Ok(id)
+}
+fn with_session<T>(
+    id: &str, callback: impl FnOnce(&mut Session) -> Result<T, &'static str>,
+) -> Result<T, &'static str> {
+    let mut guard = session_slot().lock().map_err(|_| "state")?;
+    let Some(ref mut session) = *guard else { return Err("no_session"); };
+    if session.expires_at <= Instant::now() {
+        *guard = None; // immediately drop native credentials
+        return Err("session_expired");
+    }
+    if session.id != id { return Err("wrong_session"); }
+    callback(session)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_beginS3ReadProbe(
+    env: JNIEnv, _receiver: JClass,
+    encrypted: JByteArray, password: JCharArray,
+) -> jstring {
+    let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let bytes = read_array(&env, &encrypted, MAX_INVITE)?;
+        let pass = password_chars(&env, &password)?;
+        let signer = S3ReadSigner::from_encrypted_invitation(&bytes, &pass)
+            .map_err(|_| "invalid_invitation")?;
+        let id = new_id()?;
+        let scope = json!({
+            "session":id,"cloudVaultId":signer.cloud_vault_id(),
+            "prefix":signer.prefix(),"headKey":signer.current_head_key(),
+            "claimedGenesisFingerprint":signer.genesis_fingerprint(),
+            "provider":"yandex","trust":false,"synced":false
+        });
+        let mut guard = session_slot().lock().map_err(|_| "state")?;
+        *guard = Some(Session {
+            id, signer, expires_at: Instant::now() + SESSION_TTL,
+            signatures: 0,
+        });
+        Ok::<Value, &'static str>(json!({"ok":true,"data":scope}))
+    }));
+    result_string(env, match response {
+        Ok(Ok(value)) => value, Ok(Err(code)) => fault(code),
+        Err(_) => fault("panic"),
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_signS3ReadProbe(
+    mut env: JNIEnv, _receiver: JClass,
+    session: JString, method: JString, manifest_id: JString,
+    if_match: JString, utc_stamp: JString,
+) -> jstring {
+    let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let id = jtext(&mut env, &session)?;
+        let method = jtext(&mut env, &method)?;
+        let manifest_id = jtext(&mut env, &manifest_id)?;
+        let if_match = jtext(&mut env, &if_match)?;
+        let stamp = jtext(&mut env, &utc_stamp)?;
+        with_session(&id, |slot| {
+            if slot.signatures >= MAX_READ_SIGNATURES { return Err("quota"); }
+            let object = if manifest_id.is_empty() {
+                S3ReadObject::CurrentHead
+            } else {
+                parse_manifest_id(&manifest_id).map_err(|_| "invalid_manifest_id")?
+            };
+            let signed = slot.signer.sign(
+                object, &method, &stamp,
+                if if_match.is_empty() { None } else { Some(&if_match) },
+            ).map_err(|_| "invalid_signature_request")?;
+            slot.signatures += 1;
+            Ok(json!({"ok":true,"data":{
+                "url":signed.url,"method":signed.method,
+                "authorization":signed.authorization,
+                "amzDate":signed.amz_date,"payloadSha256":EMPTY_SHA256,
+                "ifMatch":signed.if_match
+            }}))
+        })
+    }));
+    result_string(env, match response {
+        Ok(Ok(value)) => value, Ok(Err(code)) => fault(code),
+        Err(_) => fault("panic"),
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3ReadProbe(
+    mut env: JNIEnv, _receiver: JClass,
+    session: JString, head: JByteArray, manifests: JObjectArray,
+) -> jstring {
+    let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let id = jtext(&mut env, &session)?;
+        let head = read_array(&env, &head, 4096)?;
+        let count = env.get_array_length(&manifests).map_err(|_| "jni")? as usize;
+        if count == 0 || count > MAX_MANIFESTS { return Err("chain_bounds"); }
+        let mut chain = Vec::<Vec<u8>>::with_capacity(count);
+        let mut total = 0usize;
+        for i in 0..count {
+            let next = env.get_object_array_element(&manifests, i as i32)
+                .map_err(|_| "jni")?;
+            let arr = JByteArray::from(next);
+            let data = read_array(&env, &arr, MAX_MANIFEST_BYTES)?;
+            total = total.checked_add(data.len()).ok_or("chain_bounds")?;
+            if total > MAX_CHAIN_BYTES { return Err("chain_bounds"); }
+            chain.push(data);
+        }
+        with_session(&id, |slot| {
+            let slices: Vec<&[u8]> = chain.iter().map(Vec::as_slice).collect();
+            let proof = check_untrusted_genesis_chain(
+                slot.signer.prefix(), &slot.signer.cloud_vault_id(),
+                slot.signer.genesis_fingerprint(), &head, &slices,
+            ).map_err(|_| "invalid_ancestry")?;
+            Ok(json!({"ok":true,"data":{
+                "generation":proof.latest_generation,
+                "revisions":proof.latest_revisions,
+                "manifestsChecked":proof.immutable_manifests_checked,
+                "bytesOnly":true,"remoteOwnerVerified":false,"synced":false
+            }}))
+        })
+    }));
+    result_string(env, match response {
+        Ok(Ok(value)) => value, Ok(Err(code)) => fault(code),
+        Err(_) => fault("panic"),
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_endS3ReadProbe(
+    mut env: JNIEnv, _receiver: JClass, token: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let id = jtext(&mut env, &token)?;
+        let mut guard = session_slot().lock().map_err(|_| "state")?;
+        if guard.as_ref().is_some_and(|s| s.id == id) { *guard = None; }
+        Ok::<Value, &'static str>(json!({"ok":true,"closed":true}))
+    }));
+    result_string(env, match result {
+        Ok(Ok(value)) => value, Ok(Err(code)) => fault(code),
+        Err(_) => fault("panic"),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unknown_session_is_rejected_and_random_ids_change() {
+        assert!(matches!(with_session("not-real", |_| Ok(())), Err("no_session")));
+        let first = new_id().unwrap();
+        let second = new_id().unwrap();
+        assert_ne!(first, second);
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+}
