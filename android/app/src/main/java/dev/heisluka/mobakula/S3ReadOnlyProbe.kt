@@ -32,8 +32,8 @@ internal object S3ReadOnlyProbe {
         val latestRevisions: Int,
         val verifiedOnlyBytes: Boolean = true,
     )
-    private data class Meta(val etag: String, val size: Long)
-    private data class ObjectBytes(val meta: Meta, val bytes: ByteArray)
+    internal data class Meta(val etag: String, val size: Long)
+    internal data class ObjectBytes(val meta: Meta, val bytes: ByteArray)
 
     private fun json(raw: String): JSONObject {
         val obj = JSONObject(raw)
@@ -52,6 +52,27 @@ internal object S3ReadOnlyProbe {
             target.query == null && target.ref == null
 
     internal fun isPermittedEtag(value: String): Boolean = ETA.matches(value)
+
+    /** Fail closed before reading a body, including on redirects and HTTP errors. */
+    internal fun checkedMeta(
+        status: Int, etag: String?, contentEncoding: String?,
+        length: Long, maxBytes: Int,
+    ): Meta {
+        if (status != HttpURLConnection.HTTP_OK) {
+            throw IOException("S3 HTTP " + status + " cannot establish a stable read")
+        }
+        if (etag == null || !isPermittedEtag(etag)) {
+            throw IOException("S3 returned an invalid ETag")
+        }
+        if (!contentEncoding.isNullOrEmpty() &&
+            !contentEncoding.equals("identity", ignoreCase = true)) {
+            throw IOException("S3 returned compressed content")
+        }
+        if (length < 1 || length > maxBytes.toLong()) {
+            throw IOException("S3 object outside read bounds")
+        }
+        return Meta(etag, length)
+    }
 
     private fun execute(
         session: String, method: String, manifestId: String,
@@ -86,26 +107,12 @@ internal object S3ReadOnlyProbe {
                 }
                 socket.setRequestProperty("If-Match", ifMatch)
             }
-            if (socket.responseCode != HttpURLConnection.HTTP_OK) {
-                // 301/302, 403, 404, 412 and unknown statuses are all failures.
-                throw IOException("S3 отказал в чтении (HTTP " + socket.responseCode + ")")
-            }
-            val etag = socket.getHeaderField("ETag") ?: ""
-            if (!isPermittedEtag(etag)) {
-                throw IOException("S3 вернул недопустимый ETag")
-            }
-            val contentEncoding = socket.getHeaderField("Content-Encoding")
-            if (!contentEncoding.isNullOrEmpty() &&
-                !contentEncoding.equals("identity", ignoreCase = true)) {
-                throw IOException("Неожиданное кодирование S3-объекта")
-            }
-            val length = socket.contentLengthLong
-            if (length < 1 || length > maxBytes.toLong()) {
-                throw IOException("Недопустимый размер S3-объекта")
-            }
-            if (method == "HEAD") {
-                return ObjectBytes(Meta(etag, length), ByteArray(0))
-            }
+            val meta = checkedMeta(
+                socket.responseCode, socket.getHeaderField("ETag"),
+                socket.getHeaderField("Content-Encoding"),
+                socket.contentLengthLong, maxBytes,
+            )
+            if (method == "HEAD") return ObjectBytes(meta, ByteArray(0))
             val buffer = ByteArray(4096)
             val collected = ByteArrayOutputStream()
             socket.inputStream.use { stream ->
@@ -125,27 +132,33 @@ internal object S3ReadOnlyProbe {
                 }
             }
             val bytes = collected.toByteArray()
-            if (bytes.size.toLong() != length) {
+            if (bytes.size.toLong() != meta.size) {
                 throw IOException("Неполная передача S3-объекта")
             }
-            return ObjectBytes(Meta(etag, length), bytes)
+            return ObjectBytes(meta, bytes)
         } finally {
             socket.disconnect()
         }
     }
 
-    private fun readStable(session: String, manifestId: String, maxBytes: Int): ObjectBytes {
-        val before = execute(session, "HEAD", manifestId, maxBytes = maxBytes).meta
-        val body = execute(
-            session, "GET", manifestId, ifMatch = before.etag, maxBytes = maxBytes
-        )
-        val after = execute(session, "HEAD", manifestId, maxBytes = maxBytes).meta
+    /** Same production state machine, with an injected transport for offline tests. */
+    internal fun readStableFrom(
+        session: String, manifestId: String, maxBytes: Int,
+        fetch: (String, String, String, String, Int) -> ObjectBytes,
+    ): ObjectBytes {
+        val before = fetch(session, "HEAD", manifestId, "", maxBytes).meta
+        val body = fetch(session, "GET", manifestId, before.etag, maxBytes)
+        val after = fetch(session, "HEAD", manifestId, "", maxBytes).meta
         if (before != after || body.meta != before ||
-            body.bytes.size.toLong() != before.size) {
+            body.bytes.size.toLong() != before.size ||
+            before.size !in 1..maxBytes.toLong() || !isPermittedEtag(before.etag)) {
             throw IOException("S3-объект изменился при чтении")
         }
         return body
     }
+
+    private fun readStable(session: String, manifestId: String, maxBytes: Int): ObjectBytes =
+        readStableFrom(session, manifestId, maxBytes, ::execute)
 
     private fun parentId(json: JSONObject): String? {
         if (!json.has("previous_manifest_id") || json.isNull("previous_manifest_id")) {
