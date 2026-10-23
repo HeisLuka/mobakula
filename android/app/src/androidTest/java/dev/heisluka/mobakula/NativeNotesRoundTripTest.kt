@@ -2,6 +2,7 @@ package dev.heisluka.mobakula
 
 import android.Manifest
 import android.content.pm.PackageManager
+import java.io.File
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
@@ -30,7 +31,8 @@ class NativeNotesRoundTripTest {
             PackageManager.PERMISSION_DENIED,
             context.checkSelfPermission(Manifest.permission.INTERNET),
         )
-        requireOk(JSONObject().put("action", "init").put("root", context.filesDir.absolutePath))
+        val smokeRoot = File(context.noBackupFilesDir, "m1-native-smoke-vault")
+        requireOk(JSONObject().put("action", "init").put("root", smokeRoot.absolutePath))
         val initial = requireOk(
             JSONObject().put("action", "create").put("content", "# Проверка\nТекст 🦈"),
         )
