@@ -30,3 +30,6 @@ pub mod s3_invite;
 
 /// Complete ancestry bytes, still untrusted until S3 reads and owner are checked.
 pub mod s3_trust;
+
+/// Short-lived SigV4 GET/HEAD signatures scoped to one authenticated Yandex invite.
+pub mod s3_readonly;
