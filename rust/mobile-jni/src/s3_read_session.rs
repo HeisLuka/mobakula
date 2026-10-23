@@ -7,9 +7,15 @@ use jni::{JNIEnv, objects::{JByteArray, JCharArray, JClass, JObjectArray, JStrin
 use jni::sys::jstring;
 use mobakula_mobile_api::s3_readonly::{
     EMPTY_SHA256, S3ReadObject, S3ReadSigner, parse_manifest_id,
+    parse_revision_id,
 };
 use mobakula_mobile_api::s3_trust::check_untrusted_genesis_chain;
 use mobakula_mobile_api::s3_index::inspect_untrusted_sharded_index;
+use mobakula_mobile_api::s3_revisions::{
+    collect_untrusted_revision_refs, inspect_untrusted_revision_records,
+    MAX_REVISION_PREVIEW, MAX_REVISION_JSON_BYTES,
+};
+use mobakula_mobile_api::s3_revisions::S3RevisionRefV1;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::{Value, json};
 use std::{ptr, sync::{Mutex, OnceLock}, time::{Duration, Instant}};
@@ -31,6 +37,8 @@ struct Session {
     expires_at: Instant,
     signatures: usize,
     ancestry_head_sha256: Option<[u8;32]>,
+    revision_index_head_sha256: Option<[u8;32]>,
+    revision_refs: Vec<S3RevisionRefV1>,
 }
 static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
 
@@ -106,6 +114,8 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_beginS3ReadProbe(
             id, signer, expires_at: Instant::now() + SESSION_TTL,
             signatures: 0,
             ancestry_head_sha256: None,
+            revision_index_head_sha256: None,
+            revision_refs: Vec::new(),
         });
         Ok::<Value, &'static str>(json!({"ok":true,"data":scope}))
     }));
@@ -175,6 +185,10 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3ReadProbe
             chain.push(data);
         }
         with_session(&id, |slot| {
+            // A new ancestry attempt invalidates all earlier index authority.
+            slot.ancestry_head_sha256 = None;
+            slot.revision_index_head_sha256 = None;
+            slot.revision_refs.clear();
             let slices: Vec<&[u8]> = chain.iter().map(Vec::as_slice).collect();
             let proof = check_untrusted_genesis_chain(
                 slot.signer.prefix(), &slot.signer.cloud_vault_id(),
@@ -226,6 +240,8 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3IndexProb
             payload.push(bytes);
         }
         with_session(&id, |session| {
+            session.revision_refs.clear();
+            session.revision_index_head_sha256 = None;
             let digest = ring::digest::digest(&ring::digest::SHA256, &head);
             if session.ancestry_head_sha256.as_ref().map(|x| x.as_slice())
                 != Some(digest.as_ref())
@@ -237,15 +253,125 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3IndexProb
                 session.signer.prefix(), &session.signer.cloud_vault_id(),
                 &head, &newest, &slices,
             ).map_err(|_| "invalid_sharded_index")?;
+            // For bounded indices, bind every canonical revision UUID to this
+            // exact-root proof. Other indices remain count-only, not empty.
+            let can_read_revisions = index.revisions <= MAX_REVISION_PREVIEW;
+            let revision_ids = if can_read_revisions {
+                let refs = collect_untrusted_revision_refs(
+                    session.signer.prefix(), &session.signer.cloud_vault_id(),
+                    &head, &newest, &slices,
+                ).map_err(|_| "invalid_revision_index")?;
+                let ids: Vec<String> = refs.iter().map(|r| r.revision_id.to_string()).collect();
+                let mut identity = [0u8;32];
+                identity.copy_from_slice(digest.as_ref());
+                session.revision_index_head_sha256 = Some(identity);
+                session.revision_refs = refs;
+                ids
+            } else {
+                Vec::new()
+            };
             Ok(json!({"ok":true,"data":{
                 "revisions":index.revisions,
                 "documents":index.distinct_document_ids,
                 "shardsChecked":index.shards_checked,
+                "revisionIds":revision_ids,
+                "metadataPreviewSupported":can_read_revisions,
                 "bytesOnly":true,"remoteOwnerVerified":false,"synced":false
             }}))
         })
     }));
     result_string(env, match response {
+        Ok(Ok(value)) => value, Ok(Err(code)) => fault(code),
+        Err(_) => fault("panic"),
+    })
+}
+
+/// Sign only immutable revisions selected by the exact-root verified index
+/// in this native session. Never expose a general-purpose object signer.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_signS3RevisionProbe(
+    mut env: JNIEnv, _receiver: JClass,
+    session: JString, revision_id: JString, method: JString,
+    if_match: JString, utc_stamp: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let token = jtext(&mut env, &session)?;
+        let revision_id = jtext(&mut env, &revision_id)?;
+        let method = jtext(&mut env, &method)?;
+        let if_match = jtext(&mut env, &if_match)?;
+        let stamp = jtext(&mut env, &utc_stamp)?;
+        let id = parse_revision_id(&revision_id).map_err(|_| "invalid_revision_id")?;
+        with_session(&token, |slot| {
+            if slot.signatures >= MAX_READ_SIGNATURES { return Err("quota"); }
+            if slot.revision_index_head_sha256.is_none()
+                || !slot.revision_refs.iter().any(|reference| reference.revision_id == id)
+            {
+                return Err("revision_not_in_verified_index");
+            }
+            let signed = slot.signer.sign(
+                S3ReadObject::ImmutableRevision(id), &method, &stamp,
+                if if_match.is_empty() { None } else { Some(&if_match) },
+            ).map_err(|_| "invalid_signature_request")?;
+            slot.signatures += 1;
+            Ok(json!({"ok":true,"data":{
+                "url":signed.url,"method":signed.method,
+                "authorization":signed.authorization,
+                "amzDate":signed.amz_date,"payloadSha256":EMPTY_SHA256,
+                "ifMatch":signed.if_match
+            }}))
+        })
+    }));
+    result_string(env, match result {
+        Ok(Ok(value)) => value, Ok(Err(code)) => fault(code),
+        Err(_) => fault("panic"),
+    })
+}
+
+/// Check all immutable revision JSON against the same exact-root index proof.
+/// The Android adapter independently rereads the current head after download.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3RevisionsProbe(
+    mut env: JNIEnv, _receiver: JClass,
+    token: JString, head: JByteArray, revisions: JObjectArray,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let id = jtext(&mut env, &token)?;
+        let root = read_array(&env, &head, 4096)?;
+        let count = env.get_array_length(&revisions).map_err(|_| "jni")? as usize;
+        if count > MAX_REVISION_PREVIEW { return Err("revision_bounds"); }
+        let mut raw = Vec::with_capacity(count);
+        let mut total = 0usize;
+        for i in 0..count {
+            let item = env.get_object_array_element(&revisions, i as i32)
+                .map_err(|_| "jni")?;
+            let bytes = read_array(&env, &JByteArray::from(item), MAX_REVISION_JSON_BYTES)?;
+            total = total.checked_add(bytes.len()).ok_or("revision_bounds")?;
+            if total > MAX_REVISION_PREVIEW * MAX_REVISION_JSON_BYTES {
+                return Err("revision_bounds");
+            }
+            raw.push(bytes);
+        }
+        with_session(&id, |slot| {
+            let digest = ring::digest::digest(&ring::digest::SHA256, &root);
+            if slot.revision_index_head_sha256.as_ref().map(|x| x.as_slice())
+                != Some(digest.as_ref())
+            {
+                return Err("unverified_revision_root");
+            }
+            let slices: Vec<&[u8]> = raw.iter().map(Vec::as_slice).collect();
+            let preview = inspect_untrusted_revision_records(&slot.revision_refs, &slices)
+                .map_err(|_| "invalid_revision_metadata")?;
+            Ok(json!({"ok":true,"data":{
+                "revisionsChecked":preview.revisions_checked,
+                "contentRevisions":preview.content_revisions,
+                "renameRevisions":preview.rename_revisions,
+                "tombstones":preview.tombstones,
+                "metadataChecked":true,
+                "remoteOwnerVerified":false,"synced":false
+            }}))
+        })
+    }));
+    result_string(env, match result {
         Ok(Ok(value)) => value, Ok(Err(code)) => fault(code),
         Err(_) => fault("panic"),
     })

@@ -5,9 +5,10 @@
 use std::{collections::{BTreeMap, BTreeSet}, str::FromStr};
 use aquilum_core::sync::{
     RevisionDag, RevisionOperation, RevisionRecord, S3HeadPointerV1,
-    S3Keyspace, S3ManifestShardV1, S3ManifestV1, S3RevisionRefV1, VaultId,
+    S3Keyspace, S3ManifestShardV1, S3ManifestV1, VaultId,
 };
 use crate::s3_index::inspect_untrusted_sharded_index;
+pub use aquilum_core::sync::S3RevisionRefV1;
 
 pub const MAX_REVISION_PREVIEW: usize = 64;
 pub const MAX_REVISION_JSON_BYTES: usize = 64 * 1024;
@@ -70,6 +71,18 @@ pub fn inspect_untrusted_revision_metadata(
     let refs = collect_untrusted_revision_refs(
         prefix, cloud_vault_id, head, latest, shards,
     )?;
+    inspect_untrusted_revision_records(&refs, revision_json)
+}
+
+/// The caller must supply references from a successful exact-root index
+/// proof in the same expiring native session; no trust or file authority
+/// is derived from this offline validation.
+pub fn inspect_untrusted_revision_records(
+    refs: &[S3RevisionRefV1], revision_json: &[&[u8]],
+) -> Result<UntrustedS3RevisionPreview, S3RevisionProofError> {
+    if refs.len() > MAX_REVISION_PREVIEW {
+        return Err(S3RevisionProofError::TooManyRevisions);
+    }
     if refs.len() != revision_json.len() {
         return Err(S3RevisionProofError::MissingRevision);
     }
