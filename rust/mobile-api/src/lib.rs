@@ -24,3 +24,6 @@ pub mod notes;
 /// Read-only structural compatibility with the desktop S3 contract.
 /// This module cannot authenticate or apply remote data.
 pub mod s3_contract;
+
+/// Offline V1 password-authenticated invite preview. No credential storage or network.
+pub mod s3_invite;

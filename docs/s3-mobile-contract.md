@@ -8,12 +8,13 @@ Akula Core types*. It does not contact S3, read an encrypted invitation, authent
 a publisher, import a profile, or read/write a note. It cannot mark a device synced.
 
 - Mobile base: `d786ee3fa78c227ba470868653edc19a5beef091` (local NoteVault, JNI, crash-draft recovery).
-- Desktop Core review pin candidate: `195821e10d0d8e87c8ef8af6693ccddf7669a3cf` (Akula `main` at inspection).
+- Desktop Core review pin candidate: `58a15187b790ade76b5e70fed9342b789f3623fe` ([upstream draft PR #688](https://github.com/Lalalalendia/Akula/pull/688)); **not merged, pin is experimental**.
 - Previous mobile Core pin: `d4487a78083150924a7a8b8ea85693d931041960`.
 - Source of S3 keyspace/head: `aquilum-app/core/src/sync/s3.rs`.
 - Source of manifest/digest: `aquilum-app/core/src/sync/s3_manifest.rs`.
-- S3 transport and invite crypto are **behind** opt-in Core feature `sync-s3`.
-  This branch **does not turn on that feature**; Android has no S3 SDK yet.
+- S3 transport remains behind heavy `sync-s3`; V1 invite crypto now uses
+  portable `sync-s3-invite` from upstream PR #688, **without** AWS SDK or host custody.
+  Android still has no S3 network transport or Keystore-backed credential store.
 
 ## Existing desktop wire contract, not a new one
 
@@ -66,3 +67,19 @@ note Core: do not merge without regression review and Android runtime checks.
    invite trust boundary before enabling `sync-s3`.
 
 No KVM, S3 credentials, S3 writes, or permissions are introduced in this PR.
+
+## Offline invitation inspection (S1 foundation, not S2 completed)
+
+`mobile-api::s3_invite::inspect_untrusted_s3_invite` calls upstream Core's
+existing V1 PBKDF2+AES-GCM authenticated decryptor. It returns a struct with
+ONLY non-secret provider/bucket/prefix/cloud VaultId/genesis fingerprint; it
+never exposes or serializes the access key or secret. The temporary
+`S3PairInvite` drops and zeroizes its keys. This is not an S3 trust or
+membership grant; the profile and fingerprint remain **untrusted** until
+independently verified against remote pinned genesis and owner policy.
+
+The routine currently has no Android UI/JNI entrypoint; passwords are never
+sent through a JSON-native command or persisted into application storage.
+Tests cover wrong password, corrupted ciphertext, header/KDF changes and
+oversize. The unmerged desktop Core PR #688 must receive manual security
+review and merge before replacing the experimental pin with a stable revision.
