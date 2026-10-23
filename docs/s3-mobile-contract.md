@@ -83,3 +83,15 @@ sent through a JSON-native command or persisted into application storage.
 Tests cover wrong password, corrupted ciphertext, header/KDF changes and
 oversize. The unmerged desktop Core PR #688 must receive manual security
 review and merge before replacing the experimental pin with a stable revision.
+
+## Android offline preview (not a connection or pairing grant)
+
+Under **Files** the `.akula-sync` checker reads at most 16 KiB through SAF,
+accepts a masked non-saveable password, and passes an encrypted ByteArray plus
+transient mutable CharArray to a dedicated JNI method. The ordinary JSON
+`request` path carries no password; Rust zeroizes its transient UTF-16 and
+UTF-8 passwords and only serializes non-secret fields and `trusted=false`.
+Kotlin Compose temporarily holds an immutable String, so this is **not** an
+at-rest credential store. The field is cleared when submitted; Android
+Keystore import and verified genesis still require separate S2/S3 work.
+No INTERNET permission or automatic S3 access is added.

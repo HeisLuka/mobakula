@@ -475,6 +475,7 @@ private fun NotesFiles(
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
+            S3InvitePreviewCard()
         }
     }
 }

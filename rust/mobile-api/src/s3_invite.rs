@@ -4,7 +4,8 @@
 //! the temporary upstream S3PairInvite object, whose Drop zeroizes them.
 //! Do NOT pass plaintext passwords through the existing JSON JNI command.
 
-use aquilum_core::sync::s3_pair_invite::{open_s3_pair_invite, PairInviteError};
+use aquilum_core::sync::s3_pair_invite::open_s3_pair_invite;
+pub use aquilum_core::sync::s3_pair_invite::PairInviteError;
 use aquilum_core::sync::s3_pair_profile::S3PairProfile;
 
 /// Authenticated invite metadata, NOT verified against S3 genesis or owner.

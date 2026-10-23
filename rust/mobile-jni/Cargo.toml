@@ -13,3 +13,4 @@ mobakula-mobile-api = { path = "../mobile-api" }
 jni = "0.21"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+zeroize = "1.9"
