@@ -48,6 +48,8 @@ internal object S3ReadOnlyProbe {
         val contentPreviewSupported: Boolean = false,
         val verifiedBlobCount: Int = 0,
         val verifiedBlobBytes: Long = 0,
+        val receiveCandidatesPreview: Int = 0,
+        val receiveNeedsReviewPreview: Int = 0,
     )
     internal data class Meta(val etag: String, val size: Long)
     internal data class ObjectBytes(val meta: Meta, val bytes: ByteArray)
@@ -317,6 +319,8 @@ internal object S3ReadOnlyProbe {
             var checkedBlobs = 0
             var checkedBlobBytes = 0L
             var blobsSupported = false
+            var candidates = 0
+            var needsReview = 0
             if (supported) {
                 val refs = index.getJSONArray("revisionIds")
                 if (refs.length() != index.getInt("revisions") ||
@@ -398,8 +402,23 @@ internal object S3ReadOnlyProbe {
                                 proofBlobs.getLong("bytesChecked") != totalBlobBytes) {
                                 throw IOException("S3 blob не прошёл проверку целостности")
                             }
+                            val possible = proofBlobs.getInt("receiveCandidates")
+                            val review = proofBlobs.getInt("needsReview")
+                            val forked = proofBlobs.getInt("forkedDocuments")
+                            val deleted = proofBlobs.getInt("deletedDocuments")
+                            val unsupported = proofBlobs.getInt("unsupportedDocuments")
+                            if (proofBlobs.optBoolean("localConflictsChecked", true) ||
+                                proofBlobs.optBoolean("importAuthorized", true) ||
+                                possible < 0 || review < 0 ||
+                                forked < 0 || deleted < 0 || unsupported < 0 ||
+                                forked + deleted + unsupported != review ||
+                                possible + review > index.getInt("documents")) {
+                                throw IOException("Недостоверный план импорта S3")
+                            }
                             checkedBlobs = proofBlobs.getInt("blobsChecked")
                             checkedBlobBytes = proofBlobs.getLong("bytesChecked")
+                            candidates = possible
+                            needsReview = review
                         } finally {
                             firstClear(received)
                         }
@@ -417,6 +436,8 @@ internal object S3ReadOnlyProbe {
                 contentPreviewSupported = blobsSupported,
                 verifiedBlobCount = checkedBlobs,
                 verifiedBlobBytes = checkedBlobBytes,
+                receiveCandidatesPreview = candidates,
+                receiveNeedsReviewPreview = needsReview,
             )
         } finally {
             // Credentials are dropped in native memory even on timeout or UI

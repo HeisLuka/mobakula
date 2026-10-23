@@ -69,6 +69,17 @@ internal fun S3ReadOnlyProbeButton(store: S3ProtectedInviteStore, enabled: Boole
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        report?.takeIf { it.contentPreviewSupported }?.let { result ->
+            Text(
+                "Предварительный план приёма: " +
+                    result.receiveCandidatesPreview +
+                    " Markdown-документов подходят для дальнейшей проверки, " +
+                    result.receiveNeedsReviewPreview +
+                    " требуют разбора. Локальные пересечения ещё не проверены. " +
+                    "Импорт не разрешён и ничего не записывает.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         failure?.let {
             Text(it, color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall)
