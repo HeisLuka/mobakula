@@ -5,7 +5,7 @@ import android.os.Bundle
 import android.os.Process
 import android.util.AtomicFile
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -18,6 +18,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.UUID
 import org.json.JSONObject
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -110,7 +111,11 @@ class UiNotesTwoProcessTest {
         awaitTitle(title)
         compose.onNodeWithText(title).performClick()
         awaitTag("note_editor")
-        compose.onNodeWithTag("note_editor").assertTextEquals(saved.getString("content"))
+        // OutlinedTextField exposes its label as Text and the note as EditableText.
+        // assertTextEquals includes both and incorrectly fails on the label.
+        val actual = compose.onNodeWithTag("note_editor")
+            .fetchSemanticsNode().config[SemanticsProperties.EditableText].text
+        assertEquals(saved.getString("content"), actual)
         atomic.delete()
         report("ui_verified")
     }
