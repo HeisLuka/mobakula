@@ -12,6 +12,7 @@ path = "src/lib.rs"
 aquilum-core = { git = "https://github.com/Lalalalendia/Akula", rev = "f8a562b05fad81ec6bf312fa364aab1013b4dd3f", default-features = false, features = ["sync-s3-invite"] }
 
 serde = { version = "1", features = ["derive"] }
+blake3 = "1.8.5"
 uuid = { version = "1.23.5", features = ["v4"] }
 
 [dev-dependencies]

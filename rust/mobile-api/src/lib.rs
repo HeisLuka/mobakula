@@ -27,3 +27,6 @@ pub mod s3_contract;
 
 /// Offline V1 password-authenticated invite preview. No credential storage or network.
 pub mod s3_invite;
+
+/// Complete ancestry bytes, still untrusted until S3 reads and owner are checked.
+pub mod s3_trust;
