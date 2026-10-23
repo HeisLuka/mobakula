@@ -23,7 +23,7 @@ jobs:
   mobile-gate:
     name: mobile-gate
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.android_runtime && 40 || 20 }}
+    timeout-minutes: 40
     steps:
       - name: Checkout with base history
         uses: actions/checkout@v4
@@ -108,9 +108,14 @@ jobs:
         id: runtime
         env:
           RUN_ANDROID_RUNTIME: ${{ inputs.android_runtime || 'false' }}
+          PROOF_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || '' }}
         shell: bash
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$RUN_ANDROID_RUNTIME" == "true" ]]; then
+          # ONE-OFF: same-repository draft recovery proof; REMOVE before merge.
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$RUN_ANDROID_RUNTIME" == "true" ]] \
+            || [[ "$GITHUB_EVENT_NAME" == "pull_request" \
+              && "$GITHUB_HEAD_REF" == "feat/android-durable-draft-recovery-20261023" \
+              && "$PROOF_HEAD_REPO" == "$GITHUB_REPOSITORY" ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
