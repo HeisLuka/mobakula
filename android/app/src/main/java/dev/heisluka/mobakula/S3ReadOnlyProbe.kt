@@ -50,6 +50,11 @@ internal object S3ReadOnlyProbe {
         val verifiedBlobBytes: Long = 0,
         val receiveCandidatesPreview: Int = 0,
         val receiveNeedsReviewPreview: Int = 0,
+        val localSlotsChecked: Boolean = false,
+        val localSlotsAbsent: Int = 0,
+        val localSlotsIdenticalUnbound: Int = 0,
+        val localSlotsConflicting: Int = 0,
+        val localSlotsUnsafe: Int = 0,
     )
     internal data class Meta(val etag: String, val size: Long)
     internal data class ObjectBytes(val meta: Meta, val bytes: ByteArray)
@@ -321,6 +326,7 @@ internal object S3ReadOnlyProbe {
             var blobsSupported = false
             var candidates = 0
             var needsReview = 0
+            var slots = S3LocalSlotProbe.Scan()
             if (supported) {
                 val refs = index.getJSONArray("revisionIds")
                 if (refs.length() != index.getInt("revisions") ||
@@ -419,6 +425,7 @@ internal object S3ReadOnlyProbe {
                             checkedBlobBytes = proofBlobs.getLong("bytesChecked")
                             candidates = possible
                             needsReview = review
+                            slots = S3LocalSlotProbe.inspect(session, first.bytes, possible)
                         } finally {
                             firstClear(received)
                         }
@@ -438,6 +445,11 @@ internal object S3ReadOnlyProbe {
                 verifiedBlobBytes = checkedBlobBytes,
                 receiveCandidatesPreview = candidates,
                 receiveNeedsReviewPreview = needsReview,
+                localSlotsChecked = slots.checked,
+                localSlotsAbsent = slots.absent,
+                localSlotsIdenticalUnbound = slots.identicalButUnbound,
+                localSlotsConflicting = slots.conflicting,
+                localSlotsUnsafe = slots.unsafe,
             )
         } finally {
             // Credentials are dropped in native memory even on timeout or UI

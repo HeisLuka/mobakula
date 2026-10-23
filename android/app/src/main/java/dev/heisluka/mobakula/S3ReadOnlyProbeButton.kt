@@ -80,6 +80,18 @@ internal fun S3ReadOnlyProbeButton(store: S3ProtectedInviteStore, enabled: Boole
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        report?.takeIf { it.localSlotsChecked }?.let { result ->
+            Text(
+                "Сверка локальных UUID-слотов: отсутствуют " +
+                    result.localSlotsAbsent + ", одинаковое содержимое без привязки " +
+                    result.localSlotsIdenticalUnbound + ", конфликты " +
+                    result.localSlotsConflicting + ", небезопасные объекты " +
+                    result.localSlotsUnsafe + ". " +
+                    "Это не разрешение импорта: идентичность источника и " +
+                    "локальная привязка ещё не подтверждены.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         failure?.let {
             Text(it, color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall)

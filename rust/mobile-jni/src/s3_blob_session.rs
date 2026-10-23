@@ -82,6 +82,9 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3BlobsProb
             raw.push(Zeroizing::new(signed.iter().map(|b| *b as u8).collect()));
         }
         with_session(&id, |slot| {
+            // An unsuccessful repeated proof revokes the prior local scan.
+            slot.proven_blobs_head_sha256 = None;
+            slot.provisional_candidates.clear();
             let digest = ring::digest::digest(&ring::digest::SHA256, &head);
             if slot.blob_head_sha256.as_ref().map(|x| x.as_slice())
                 != Some(digest.as_ref())
@@ -94,6 +97,10 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3BlobsProb
             let plan = preview_untrusted_s3_additive_receive(
                 &slot.receive_records, &slot.blob_expectations, &slices,
             ).map_err(|_| "invalid_receive_preflight")?;
+            let mut identity = [0u8;32];
+            identity.copy_from_slice(digest.as_ref());
+            slot.proven_blobs_head_sha256 = Some(identity);
+            slot.provisional_candidates = plan.candidates.clone();
             Ok(json!({"ok":true,"data":{
                 "blobsChecked":proof.blobs_checked,
                 "bytesChecked":proof.bytes_checked,

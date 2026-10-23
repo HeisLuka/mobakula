@@ -1,6 +1,7 @@
 //! App-private notes routed through Akula Core File Gate and HistoryService.
 use aquilum_core::files::{document, error::FileCommandError, gate};
 use aquilum_core::history::Source;
+use aquilum_core::sync::DocumentId;
 use aquilum_core::{Core, CoreEvent};
 use serde::Serialize;
 use std::fs;
@@ -24,6 +25,16 @@ pub struct NoteSummary {
     pub id: String,
     pub title: String,
     pub modified_ms: u64,
+}
+
+/// Untrusted remote UUID is only a *possible* local filename, not an
+/// authenticated remote-to-local identity binding or a File Gate reservation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum S3LocalSlotState {
+    Absent,
+    SameContentUnbound,
+    DifferentContent,
+    UnsafeEntry,
 }
 
 #[derive(Debug)]
@@ -208,6 +219,45 @@ impl NoteVault {
         Ok(note)
     }
 
+    /// Advisory check of the app-private UUID slot corresponding to a
+    /// remote DocumentId. Never opens a remote path, mutates files or claims
+    /// that equal hashes establish origin/identity. A File Gate create must
+    /// recheck the slot atomically; this report expires immediately.
+    pub fn inspect_untrusted_s3_slot(
+        &self, remote_document: DocumentId, expected_blake3: &str,
+    ) -> Result<S3LocalSlotState, NotesError> {
+        if expected_blake3.len() != 64 || !expected_blake3.bytes().all(|ch|
+            ch.is_ascii_digit() || (b'a'..=b'f').contains(&ch)
+        ) {
+            return Err(NotesError::new("invalid_hash", "Invalid remote BLAKE3"));
+        }
+        let dir = fs::symlink_metadata(&self.notes).map_err(NotesError::io)?;
+        if !dir.is_dir() || dir.file_type().is_symlink() {
+            return Err(NotesError::new("unsafe_root", "Notes directory changed"));
+        }
+        let id = remote_document.to_string();
+        let path = self.path(&id)?;
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound =>
+                return Ok(S3LocalSlotState::Absent),
+            Err(err) => return Err(NotesError::io(err)),
+        };
+        if meta.file_type().is_symlink() || !meta.is_file()
+            || meta.len() > MAX_NOTE_BYTES as u64
+        {
+            return Ok(S3LocalSlotState::UnsafeEntry);
+        }
+        // Re-read via the existing Core document snapshot path. A change
+        // during the read is a rejected preflight, not an empty slot.
+        let observed = self.read(&id)?;
+        Ok(if observed.hash == expected_blake3 {
+            S3LocalSlotState::SameContentUnbound
+        } else {
+            S3LocalSlotState::DifferentContent
+        })
+    }
+
     pub fn list(&self) -> Result<Vec<NoteSummary>, NotesError> {
         let mut notes = Vec::new();
         for entry in fs::read_dir(&self.notes).map_err(NotesError::io)? {
@@ -305,6 +355,44 @@ mod tests {
         assert_eq!(note.content, "# Heading\nBody\n");
         let saved = vault.save(&note.id, &note.hash, "New\r\nText").unwrap();
         assert_eq!(saved.content, "New\nText");
+    }
+
+
+    #[test]
+    fn remote_uuid_slot_preflight_is_read_only_and_never_grants_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = NoteVault::open(dir.path()).unwrap();
+        let remote = DocumentId::new();
+        let hash = blake3::hash(b"example").to_hex().to_string();
+        assert_eq!(vault.inspect_untrusted_s3_slot(remote, &hash).unwrap(),
+            S3LocalSlotState::Absent);
+        let expected = vault.notes.join(format!("{remote}.md"));
+        assert!(!expected.exists(), "preflight must never create a note");
+        fs::write(&expected, b"example").unwrap();
+        assert_eq!(vault.inspect_untrusted_s3_slot(remote, &hash).unwrap(),
+            S3LocalSlotState::SameContentUnbound);
+        fs::write(&expected, b"someone else's note").unwrap();
+        assert_eq!(vault.inspect_untrusted_s3_slot(remote, &hash).unwrap(),
+            S3LocalSlotState::DifferentContent);
+        assert_eq!(fs::read(&expected).unwrap(), b"someone else's note");
+        assert_eq!(vault.inspect_untrusted_s3_slot(remote, "NOT-A-HASH")
+            .unwrap_err().code, "invalid_hash");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_remote_slot_is_unsafe_not_identical_or_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = NoteVault::open(dir.path()).unwrap();
+        let remote = DocumentId::new();
+        let outside = dir.path().join("outside.md");
+        fs::write(&outside, b"same").unwrap();
+        std::os::unix::fs::symlink(&outside, vault.notes.join(format!("{remote}.md")))
+            .unwrap();
+        let hash = blake3::hash(b"same").to_hex().to_string();
+        assert_eq!(vault.inspect_untrusted_s3_slot(remote, &hash).unwrap(),
+            S3LocalSlotState::UnsafeEntry);
+        assert_eq!(fs::read(&outside).unwrap(), b"same");
     }
 
     #[test]
