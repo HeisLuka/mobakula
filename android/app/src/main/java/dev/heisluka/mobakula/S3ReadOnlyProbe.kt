@@ -45,6 +45,14 @@ internal object S3ReadOnlyProbe {
 
     private fun utcStamp(): String = CLOCK.format(Instant.now())
 
+    internal fun isPermittedEndpoint(target: URL): Boolean =
+        target.protocol == "https" &&
+            target.host == "storage.yandexcloud.net" &&
+            target.port == -1 && target.userInfo == null &&
+            target.query == null && target.ref == null
+
+    internal fun isPermittedEtag(value: String): Boolean = ETA.matches(value)
+
     private fun execute(
         session: String, method: String, manifestId: String,
         ifMatch: String = "", maxBytes: Int,
@@ -55,10 +63,7 @@ internal object S3ReadOnlyProbe {
         val target = URL(signed.getString("url"))
         // Even a compromised untrusted manifest cannot trigger a redirect or
         // a request outside the fixed Yandex S3 server.
-        if (target.protocol != "https" ||
-            target.host != "storage.yandexcloud.net" ||
-            target.port != -1 || target.userInfo != null ||
-            target.query != null || target.ref != null) {
+        if (!isPermittedEndpoint(target)) {
             throw IOException("Запрещённый адрес S3")
         }
         val socket = target.openConnection() as? HttpsURLConnection
@@ -86,7 +91,7 @@ internal object S3ReadOnlyProbe {
                 throw IOException("S3 отказал в чтении (HTTP " + socket.responseCode + ")")
             }
             val etag = socket.getHeaderField("ETag") ?: ""
-            if (!ETA.matches(etag)) {
+            if (!isPermittedEtag(etag)) {
                 throw IOException("S3 вернул недопустимый ETag")
             }
             val contentEncoding = socket.getHeaderField("Content-Encoding")
