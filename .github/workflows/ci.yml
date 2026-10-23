@@ -111,8 +111,8 @@ jobs:
           PROOF_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || '' }}
         shell: bash
         run: |
-          # One-off restricted PR probe. Remove this exception after collecting
-          # emulator evidence; production CI remains manual opt-in.
+          # Ephemeral same-repository PR is opt-in for exactly one evidence run.
+          # This exception NEVER enters protected main.
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$RUN_ANDROID_RUNTIME" == "true" ]] \
             || [[ "$GITHUB_EVENT_NAME" == "pull_request" \
               && "$GITHUB_HEAD_REF" == "test/android-cold-proof-20261023" \
@@ -130,8 +130,9 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            # The emulator action runs each line in an independent /bin/sh shell.
-            # One Python process executes smoke, prepare and verify in order.
+            # android-emulator-runner invokes EACH script line separately through /bin/sh.
+            # Run smoke and cold-reopen in one fail-closed Python process so that
+            # exit codes and evidence are not lost between shell invocations.
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             python3 scripts/android/cold_reopen_probe.py --ack-force-stop --include-smoke
