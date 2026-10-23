@@ -51,6 +51,28 @@ class DebouncedAutoSaveTest {
     }
 
     @Test
+    fun activeImeCompositionCancelsPendingSaveAndRestartsAfterCommit() = runTest {
+        var saves = 0
+        val pending = DebouncedAutoSave(this, { saves++ }, idleMillis = 1_200L)
+        pending.schedule()
+        advanceTimeBy(500)
+        assertFalse(canScheduleAutoSave(true, false, NoteSaveEvidence.FILE_READ, false, true))
+        // The ViewModel cancels a previously armed deadline on composition start.
+        pending.cancel()
+        advanceTimeBy(1_400)
+        runCurrent()
+        assertEquals(0, saves)
+        assertTrue(canScheduleAutoSave(true, false, NoteSaveEvidence.FILE_READ, false, false))
+        pending.schedule()
+        advanceTimeBy(1_199)
+        runCurrent()
+        assertEquals(0, saves)
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(1, saves)
+    }
+
+    @Test
     fun unknownHistoryOrFailedAttemptNeverAutoRetries() {
         assertFalse(canScheduleAutoSave(true, false, NoteSaveEvidence.NEEDS_REVIEW, false))
         assertFalse(canScheduleAutoSave(true, false, NoteSaveEvidence.VERIFIED, true))

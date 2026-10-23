@@ -271,6 +271,7 @@ private fun NotesEditor(
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val keyboardVisible = WindowInsets.isImeVisible
+    LaunchedEffect(state.opened?.id) { state.onEditorRecreated() }
     LaunchedEffect(state.draft) {
         // File Gate may normalize a saved text or Discard may restore content.
         // Do not reset the current caret on a selection-only IME event.
@@ -289,19 +290,23 @@ private fun NotesEditor(
     }
 
     fun format(command: MarkdownCommand) {
-        if (state.busy) return
+        if (state.busy || state.imeComposing) return
         val updated = applyMarkdownCommand(editor, command)
         if (updated.text != editor.text) editHistory.record(editor, updated)
         editor = updated
-        if (updated.text != state.draft) state.update(updated.text)
+        if (updated.text != state.draft || (updated.composition != null) != state.imeComposing) {
+            state.update(updated.text, composing = updated.composition != null)
+        }
         focusRequester.requestFocus()
         keyboardController?.show()
     }
 
     fun restore(value: TextFieldValue?) {
-        if (state.busy || value == null) return
+        if (state.busy || state.imeComposing || value == null) return
         editor = value
-        if (value.text != state.draft) state.update(value.text)
+        if (value.text != state.draft || (value.composition != null) != state.imeComposing) {
+            state.update(value.text, composing = value.composition != null)
+        }
         focusRequester.requestFocus()
         keyboardController?.show()
     }
@@ -331,7 +336,11 @@ private fun NotesEditor(
                 if (!state.busy) {
                     if (next.text != editor.text) editHistory.record(editor, next)
                     editor = next
-                    if (next.text != state.draft) state.update(next.text)
+                    if (next.text != state.draft ||
+                        (next.composition != null) != state.imeComposing
+                    ) {
+                        state.update(next.text, composing = next.composition != null)
+                    }
                 }
             },
             modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(focusRequester),
@@ -348,20 +357,20 @@ private fun NotesEditor(
         ) {
             AssistChip(
                 onClick = { restore(editHistory.undo(editor)) },
-                enabled = !state.busy && editHistory.canUndo,
+                enabled = !state.busy && !state.imeComposing && editHistory.canUndo,
                 label = { Text("↶", style = MaterialTheme.typography.labelLarge) },
                 modifier = Modifier.semantics { contentDescription = "Отменить изменение" },
             )
             AssistChip(
                 onClick = { restore(editHistory.redo(editor)) },
-                enabled = !state.busy && editHistory.canRedo,
+                enabled = !state.busy && !state.imeComposing && editHistory.canRedo,
                 label = { Text("↷", style = MaterialTheme.typography.labelLarge) },
                 modifier = Modifier.semantics { contentDescription = "Повторить изменение" },
             )
             MarkdownCommand.entries.forEach { command ->
                 AssistChip(
                     onClick = { format(command) },
-                    enabled = !state.busy,
+                    enabled = !state.busy && !state.imeComposing,
                     label = { Text(command.glyph, style = MaterialTheme.typography.labelLarge) },
                     modifier = Modifier.semantics {
                         contentDescription = command.description

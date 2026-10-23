@@ -33,5 +33,6 @@ internal fun canScheduleAutoSave(
     busy: Boolean,
     evidence: NoteSaveEvidence,
     blockedAfterError: Boolean,
-): Boolean = dirty && !busy && !blockedAfterError &&
+    imeComposing: Boolean = false,
+): Boolean = dirty && !busy && !blockedAfterError && !imeComposing &&
     evidence != NoteSaveEvidence.NEEDS_REVIEW
