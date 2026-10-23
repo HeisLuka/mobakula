@@ -12,6 +12,8 @@ use std::path::Path;
 use std::ptr;
 use std::sync::{Mutex, OnceLock};
 
+mod s3_read_session;
+
 static VAULT: OnceLock<Mutex<Option<NoteVault>>> = OnceLock::new();
 
 #[derive(Deserialize)]

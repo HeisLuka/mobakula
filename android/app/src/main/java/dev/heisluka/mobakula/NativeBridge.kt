@@ -13,4 +13,12 @@ internal object NativeBridge {
 
     /** Offline-only .akula-sync V1 inspection. Never put the password in request(JSON). */
     external fun inspectS3Invitation(encrypted: ByteArray, password: CharArray): String
+
+    /** Temporary native-only credential session for an explicit read-only S3 probe. */
+    external fun beginS3ReadProbe(encrypted: ByteArray, password: CharArray): String
+    external fun signS3ReadProbe(session: String, method: String, manifestId: String,
+                                 ifMatch: String, utcStamp: String): String
+    external fun verifyS3ReadProbe(session: String, head: ByteArray,
+                                   manifests: Array<ByteArray>): String
+    external fun endS3ReadProbe(session: String): String
 }
