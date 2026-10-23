@@ -130,15 +130,11 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            # Both APKs were compiled in the earlier Gradle step. Do not rebuild
-            # them in the emulator window: the first probe hit the 20-minute
-            # total-job limit before these two process assertions finished.
+            # The emulator action runs each line in an independent /bin/sh shell.
+            # One Python process executes smoke, prepare and verify in order.
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-            smoke_output="$(adb shell am instrument -w -e class dev.heisluka.mobakula.NativeNotesRoundTripTest#roundTrip_andNoInternetPermission dev.heisluka.mobakula.test/androidx.test.runner.AndroidJUnitRunner)"
-            printf '%s\n' "$smoke_output"
-            grep -F 'OK (1 test)' <<< "$smoke_output"
-            python3 scripts/android/cold_reopen_probe.py --ack-force-stop
+            python3 scripts/android/cold_reopen_probe.py --ack-force-stop --include-smoke
       - name: Upload debug APK
         if: steps.scope.outputs.android == 'true'
         uses: actions/upload-artifact@v4
