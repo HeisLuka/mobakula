@@ -20,6 +20,8 @@ import org.json.JSONObject
 internal object S3ReadOnlyProbe {
     private const val MAX_ROOT = 4096
     private const val MAX_MANIFEST = 512 * 1024
+    private const val MAX_SHARD = 128 * 1024
+    private const val MAX_PREVIEW_SHARDS = 16
     private const val MAX_CHAIN_TOTAL = 8 * 1024 * 1024
     private const val MAX_ANCESTORS = 128
     private val ETA = Regex("\"[A-Za-z0-9_.-]{1,128}\"")
@@ -30,6 +32,8 @@ internal object S3ReadOnlyProbe {
         val latestGeneration: Long,
         val manifestsChecked: Int,
         val latestRevisions: Int,
+        val distinctDocumentIds: Int = 0,
+        val validatedShards: Int = 0,
         val verifiedOnlyBytes: Boolean = true,
     )
     internal data class Meta(val etag: String, val size: Long)
@@ -177,6 +181,7 @@ internal object S3ReadOnlyProbe {
         }
         val session = start.getString("session")
         val ancestors = ArrayList<ByteArray>()
+        val shards = ArrayList<ByteArray>()
         try {
             val first = readStable(session, "", MAX_ROOT)
             val head = JSONObject(String(first.bytes, Charsets.UTF_8))
@@ -214,10 +219,46 @@ internal object S3ReadOnlyProbe {
                 proof.optBoolean("synced", true)) {
                 throw IOException("Недопустимый статус проверки S3")
             }
+            // The latest manifest contains immutable, typed shard references.
+            // This is not a LIST or an import: only a bounded, checked index.
+            val latest = JSONObject(String(ancestors.first(), Charsets.UTF_8))
+            val refs = latest.getJSONArray("shards")
+            if (refs.length() > MAX_PREVIEW_SHARDS) {
+                throw IOException("S3 индекс превышает лимит предпросмотра")
+            }
+            val shardIds = HashSet<String>()
+            var shardTotal = 0
+            for (i in 0 until refs.length()) {
+                val shardId = refs.getJSONObject(i).getString("shard_id")
+                if (!shardIds.add(shardId)) {
+                    throw IOException("Повторяющийся S3 shard")
+                }
+                val fetched = readStable(session, shardId, MAX_SHARD)
+                shardTotal += fetched.bytes.size
+                if (shardTotal > MAX_PREVIEW_SHARDS * MAX_SHARD) {
+                    throw IOException("S3 индекс превышает лимит")
+                }
+                shards.add(fetched.bytes)
+            }
+            // The root must still be byte-identical after reading every shard.
+            val lastRoot = readStable(session, "", MAX_ROOT)
+            if (first.meta != lastRoot.meta ||
+                !first.bytes.contentEquals(lastRoot.bytes)) {
+                throw IOException("S3 head изменился при чтении индекса")
+            }
+            val index = json(NativeBridge.verifyS3IndexProbe(
+                session, first.bytes, ancestors.first(), shards.toTypedArray()
+            ))
+            if (!index.optBoolean("bytesOnly", false) ||
+                index.optBoolean("remoteOwnerVerified", true) ||
+                index.optBoolean("synced", true) ||
+                index.getInt("revisions") != proof.getInt("revisions")) {
+                throw IOException("Недопустимый индекс S3")
+            }
             return Report(
-                proof.getLong("generation"),
-                proof.getInt("manifestsChecked"),
-                proof.getInt("revisions"),
+                proof.getLong("generation"), proof.getInt("manifestsChecked"),
+                proof.getInt("revisions"), index.getInt("documents"),
+                index.getInt("shardsChecked"),
             )
         } finally {
             // Credentials are dropped in native memory even on timeout or UI
@@ -226,6 +267,7 @@ internal object S3ReadOnlyProbe {
                 NativeBridge.endS3ReadProbe(session)
             } finally {
                 firstClear(ancestors)
+                firstClear(shards)
             }
         }
     }
