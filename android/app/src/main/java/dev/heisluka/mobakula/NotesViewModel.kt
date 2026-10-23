@@ -47,8 +47,11 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     val saveStatus: String get() = when {
         needsReview -> noteSaveStatus(dirty, saveEvidence)
         imeComposing && dirty -> "Ввод с клавиатуры не завершён — сохранение отложено"
-        dirty && draftCheckpointReady -> "Черновик скопирован локально; основной файл ещё не сохранён"
         autoSaveBlocked && dirty -> "Автосохранение остановлено — сохраните вручную"
+        dirty && preservedRecoveryId == opened?.id ->
+            "Старая копия сохранена отдельно; новые изменения не резервируются"
+        dirty && draftCheckpointReady ->
+            "Черновик скопирован локально; основной файл ещё не сохранён"
         else -> noteSaveStatus(dirty, saveEvidence)
     }
     val canSave: Boolean get() = canSaveNote(dirty, saveEvidence) && !imeComposing
