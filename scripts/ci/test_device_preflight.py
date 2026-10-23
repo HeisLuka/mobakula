@@ -139,6 +139,42 @@ class DeviceTests(unittest.TestCase):
             self.assertTrue(all(not set(cmd) & {"install", "uninstall", "clear", "force-stop"}
                                 for cmd in seen))
 
+    def test_read_only_existing_installation_checks_signer_and_version(self):
+        with tempfile.TemporaryDirectory() as path:
+            bundle(Path(path))
+            seen = []
+
+            def fake_command(args, *, timeout=35):
+                seen.append(args)
+                if args[0] == "aapt":
+                    return OLD_BADGE if args[-1].endswith("installed-base.apk") else BADGE
+                if args[0] == "apksigner":
+                    return SIG
+                if args == ["adb", "devices"]:
+                    return "List of devices attached\nphone1\tdevice\n"
+                if args[-2:] == ["getprop", "ro.build.version.sdk"]:
+                    return "35"
+                if args[-2:] == ["getprop", "ro.product.cpu.abilist"]:
+                    return "arm64-v8a,armeabi-v7a"
+                if args[-2:] == ["getprop", "ro.kernel.qemu"]:
+                    return "0"
+                if args[-3:] == ["pm", "path", pre.PACKAGE]:
+                    return "package:/data/app/base.apk"
+                if "pull" in args:
+                    Path(args[-1]).write_bytes(b"local test fixture")
+                    return "1 file pulled"
+                raise AssertionError("Unexpected command " + repr(args))
+
+            output = io.StringIO()
+            argv = ["preflight", "--bundle", path, "--expected-cert", CERT]
+            with patch.object(sys, "argv", argv), patch.object(pre, "command", side_effect=fake_command):
+                with redirect_stdout(output):
+                    self.assertEqual(pre.main(), 0)
+            self.assertIn("IN_PLACE_UPDATE_METADATA_OK", output.getvalue())
+            self.assertTrue(any("pull" in cmd for cmd in seen))
+            self.assertTrue(all(not set(cmd) & {"install", "uninstall", "clear", "force-stop"}
+                                for cmd in seen))
+
     def test_device_selection_fails_closed_for_many_or_offline(self):
         with patch.object(pre, "command", return_value="List of devices attached\nphone1\tdevice\nphone2\tdevice\n"):
             with self.assertRaisesRegex(pre.PreflightError, "exactly one"):
