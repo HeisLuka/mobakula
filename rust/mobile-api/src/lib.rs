@@ -39,3 +39,6 @@ pub mod s3_index;
 
 /// Bounded validation of immutable revision metadata (S4a, no content import).
 pub mod s3_revisions;
+
+/// Exact content hash and length proof; no File Gate write authority.
+pub mod s3_blobs;

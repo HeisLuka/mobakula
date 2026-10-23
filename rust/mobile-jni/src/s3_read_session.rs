@@ -15,6 +15,10 @@ use mobakula_mobile_api::s3_revisions::{
     collect_untrusted_revision_refs, inspect_untrusted_revision_records,
     MAX_REVISION_PREVIEW, MAX_REVISION_JSON_BYTES,
 };
+use mobakula_mobile_api::s3_blobs::{
+    collect_bounded_blob_expectations, verify_bounded_blob_bytes,
+    S3BlobExpectation, S3BlobProofError, MAX_BLOB_COUNT, MAX_BLOB_BYTES, MAX_BLOB_TOTAL,
+};
 use mobakula_mobile_api::s3_revisions::S3RevisionRefV1;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::{Value, json};
@@ -28,7 +32,7 @@ const MAX_MANIFEST_BYTES: usize = 512 * 1024;
 const MAX_INDEX_SHARDS: usize = 16;
 const MAX_INDEX_SHARD_BYTES: usize = 128 * 1024;
 const MAX_CHAIN_BYTES: usize = 8 * 1024 * 1024;
-const MAX_READ_SIGNATURES: usize = 640;
+const MAX_READ_SIGNATURES: usize = 768;
 const SESSION_TTL: Duration = Duration::from_secs(180);
 
 struct Session {
@@ -39,6 +43,8 @@ struct Session {
     ancestry_head_sha256: Option<[u8;32]>,
     revision_index_head_sha256: Option<[u8;32]>,
     revision_refs: Vec<S3RevisionRefV1>,
+    blob_head_sha256: Option<[u8;32]>,
+    blob_expectations: Vec<S3BlobExpectation>,
 }
 static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
 
@@ -116,6 +122,8 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_beginS3ReadProbe(
             ancestry_head_sha256: None,
             revision_index_head_sha256: None,
             revision_refs: Vec::new(),
+            blob_head_sha256: None,
+            blob_expectations: Vec::new(),
         });
         Ok::<Value, &'static str>(json!({"ok":true,"data":scope}))
     }));
@@ -189,6 +197,8 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3ReadProbe
             slot.ancestry_head_sha256 = None;
             slot.revision_index_head_sha256 = None;
             slot.revision_refs.clear();
+            slot.blob_head_sha256 = None;
+            slot.blob_expectations.clear();
             let slices: Vec<&[u8]> = chain.iter().map(Vec::as_slice).collect();
             let proof = check_untrusted_genesis_chain(
                 slot.signer.prefix(), &slot.signer.cloud_vault_id(),
@@ -242,6 +252,8 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3IndexProb
         with_session(&id, |session| {
             session.revision_refs.clear();
             session.revision_index_head_sha256 = None;
+            session.blob_head_sha256 = None;
+            session.blob_expectations.clear();
             let digest = ring::digest::digest(&ring::digest::SHA256, &head);
             if session.ancestry_head_sha256.as_ref().map(|x| x.as_slice())
                 != Some(digest.as_ref())
@@ -352,6 +364,9 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3Revisions
             raw.push(bytes);
         }
         with_session(&id, |slot| {
+            // A failed recheck must revoke any previously approved blob set.
+            slot.blob_head_sha256 = None;
+            slot.blob_expectations.clear();
             let digest = ring::digest::digest(&ring::digest::SHA256, &root);
             if slot.revision_index_head_sha256.as_ref().map(|x| x.as_slice())
                 != Some(digest.as_ref())
@@ -361,12 +376,123 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3Revisions
             let slices: Vec<&[u8]> = raw.iter().map(Vec::as_slice).collect();
             let preview = inspect_untrusted_revision_records(&slot.revision_refs, &slices)
                 .map_err(|_| "invalid_revision_metadata")?;
+            let selection = collect_bounded_blob_expectations(&slot.revision_refs, &slices);
+            let can_read_blobs = !matches!(&selection, Err(S3BlobProofError::PreviewLimit));
+            let candidates = match selection {
+                Ok(items) => items,
+                Err(S3BlobProofError::PreviewLimit) => Vec::new(),
+                Err(_) => return Err("invalid_blob_references"),
+            };
+            let blob_refs: Vec<Value> = candidates.iter()
+                .map(|item| json!({"hash":item.blake3,"bytes":item.bytes}))
+                .collect();
+            if can_read_blobs {
+                let mut identity = [0u8;32];
+                identity.copy_from_slice(digest.as_ref());
+                slot.blob_head_sha256 = Some(identity);
+                slot.blob_expectations = candidates;
+            }
             Ok(json!({"ok":true,"data":{
                 "revisionsChecked":preview.revisions_checked,
                 "contentRevisions":preview.content_revisions,
                 "renameRevisions":preview.rename_revisions,
                 "tombstones":preview.tombstones,
                 "metadataChecked":true,
+                "blobPreviewSupported":can_read_blobs,
+                "blobRefs":blob_refs,
+                "remoteOwnerVerified":false,"synced":false
+            }}))
+        })
+    }));
+    result_string(env, match result {
+        Ok(Ok(value)) => value, Ok(Err(code)) => fault(code),
+        Err(_) => fault("panic"),
+    })
+}
+
+/// Only exact content digests extracted from a fully verified revision DAG
+/// can be signed; no arbitrary S3 key, no remote mutations or local writes.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_signS3BlobProbe(
+    mut env: JNIEnv, _receiver: JClass,
+    session: JString, hash: JString, method: JString,
+    if_match: JString, utc_stamp: JString,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let token = jtext(&mut env, &session)?;
+        let hash = jtext(&mut env, &hash)?;
+        let method = jtext(&mut env, &method)?;
+        let if_match = jtext(&mut env, &if_match)?;
+        let stamp = jtext(&mut env, &utc_stamp)?;
+        with_session(&token, |slot| {
+            if slot.signatures >= MAX_READ_SIGNATURES { return Err("quota"); }
+            if slot.blob_head_sha256.is_none()
+                || !slot.blob_expectations.iter().any(|item| item.blake3 == hash)
+            {
+                return Err("blob_not_in_verified_revisions");
+            }
+            let signed = slot.signer.sign(
+                S3ReadObject::ImmutableBlob(hash), &method, &stamp,
+                if if_match.is_empty() { None } else { Some(&if_match) },
+            ).map_err(|_| "invalid_signature_request")?;
+            slot.signatures += 1;
+            Ok(json!({"ok":true,"data":{
+                "url":signed.url,"method":signed.method,
+                "authorization":signed.authorization,
+                "amzDate":signed.amz_date,"payloadSha256":EMPTY_SHA256,
+                "ifMatch":signed.if_match
+            }}))
+        })
+    }));
+    result_string(env, match result {
+        Ok(Ok(value)) => value, Ok(Err(code)) => fault(code),
+        Err(_) => fault("panic"),
+    })
+}
+
+/// Blob bytes never become JSON, application files or sync receipts. Empty
+/// blobs are legal only when the immutable revision records expect them.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3BlobsProbe(
+    mut env: JNIEnv, _receiver: JClass,
+    token: JString, head: JByteArray, blobs: JObjectArray,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let id = jtext(&mut env, &token)?;
+        let head = read_array(&env, &head, 4096)?;
+        let count = env.get_array_length(&blobs).map_err(|_| "jni")? as usize;
+        if count > MAX_BLOB_COUNT { return Err("blob_bounds"); }
+        let mut raw = Vec::<Zeroizing<Vec<u8>>>::with_capacity(count);
+        let mut total = 0usize;
+        for i in 0..count {
+            let item = env.get_object_array_element(&blobs, i as i32)
+                .map_err(|_| "jni")?;
+            let arr = JByteArray::from(item);
+            let len = env.get_array_length(&arr).map_err(|_| "jni")? as usize;
+            if len > MAX_BLOB_BYTES { return Err("blob_bounds"); }
+            total = total.checked_add(len).ok_or("blob_bounds")?;
+            if total > MAX_BLOB_TOTAL { return Err("blob_bounds"); }
+            let mut signed = Zeroizing::new(vec![0i8; len]);
+            if len != 0 {
+                env.get_byte_array_region(&arr, 0, &mut signed)
+                    .map_err(|_| "jni")?;
+            }
+            raw.push(Zeroizing::new(signed.iter().map(|b| *b as u8).collect()));
+        }
+        with_session(&id, |slot| {
+            let digest = ring::digest::digest(&ring::digest::SHA256, &head);
+            if slot.blob_head_sha256.as_ref().map(|x| x.as_slice())
+                != Some(digest.as_ref())
+            {
+                return Err("unverified_blob_root");
+            }
+            let slices: Vec<&[u8]> = raw.iter().map(|v| v.as_slice()).collect();
+            let proof = verify_bounded_blob_bytes(&slot.blob_expectations, &slices)
+                .map_err(|_| "invalid_blob_content")?;
+            Ok(json!({"ok":true,"data":{
+                "blobsChecked":proof.blobs_checked,
+                "bytesChecked":proof.bytes_checked,
+                "contentChecked":true,
                 "remoteOwnerVerified":false,"synced":false
             }}))
         })
