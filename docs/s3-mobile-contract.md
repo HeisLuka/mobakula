@@ -95,3 +95,40 @@ Kotlin Compose temporarily holds an immutable String, so this is **not** an
 at-rest credential store. The field is cleared when submitted; Android
 Keystore import and verified genesis still require separate S2/S3 work.
 No INTERNET permission or automatic S3 access is added.
+
+## Android Keystore-bound storage (S2 local profile, no S3 trust)
+
+After successful offline authentication of the original .akula-sync V1 envelope,
+the user explicitly selects "Проверить и сохранить". A single local profile
+is written atomically to noBackupFilesDir/s3-profiles/primary.sealed under an
+app-scoped, nonexportable Android Keystore AES-256-GCM key. The ciphertext
+contains the still password-encrypted V1 envelope and its password; both are
+encrypted under AES-GCM at rest and plaintext password bytes are zeroed.
+There is no cleartext settings JSON, SQLite, preferences, exported file or
+cloud sync. Android backup is disabled in AndroidManifest.
+
+On reopening the Files tab in a new process, the Keystore unwraps the record
+and Rust reauthenticates the original V1 envelope, returning ONLY nonsecret
+metadata. If the key/tag/wire bytes are missing or corrupted, show an error
+and require explicit deletion plus reimport, never create a replacement key
+and never silently allow S3 access. Profile replacement is refused until
+the current profile is explicitly removed. Deletion revokes the per-scope
+Keystore key and removes the ciphertext, leaving local notes unchanged.
+
+Security boundaries:
+- This is protected *at-rest* storage, not a verified S3 provider, signed
+  publisher, pinned genesis, authenticated remote head or File Gate grant.
+- It does not require a screen-lock or biometric challenge on every use; an
+  unlocked/compromised application process can request a decrypt operation.
+  Keystore alone is not a complete secret management or remote trust system.
+- Compose holds a transient password String while the user types. It is not
+  saved in UI state, is cleared on submit, and native char buffers are zeroed.
+  No claim of secure erasure of managed immutable String heap copies is made.
+- App uninstall or loss of Keystore key makes the profile irrecoverable;
+  the original .akula-sync file/password must be retained by the owner.
+- Instrumentation tests use a distinct 'instrumentation-s3-fixture' profile
+  and do not touch the user's 'primary' profile.
+- No INTERNET permission, S3 HEAD/GET/PUT, file mutations or Sync status.
+- Tests on a real Android Keystore still require emulator/physical runtime,
+  including cold process restart and GCM tamper rejection. A green Kotlin
+  compile is not sufficient.
