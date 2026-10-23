@@ -21,6 +21,8 @@ internal object S3ReadOnlyProbe {
     private const val MAX_ROOT = 4096
     private const val MAX_MANIFEST = 512 * 1024
     private const val MAX_SHARD = 128 * 1024
+    private const val MAX_REVISION_JSON = 64 * 1024
+    private const val MAX_REVISION_PREVIEW = 64
     private const val MAX_PREVIEW_SHARDS = 16
     private const val MAX_CHAIN_TOTAL = 8 * 1024 * 1024
     private const val MAX_ANCESTORS = 128
@@ -35,6 +37,8 @@ internal object S3ReadOnlyProbe {
         val distinctDocumentIds: Int = 0,
         val validatedShards: Int = 0,
         val verifiedOnlyBytes: Boolean = true,
+        val metadataRevisionsChecked: Int = 0,
+        val metadataPreviewSupported: Boolean = false,
     )
     internal data class Meta(val etag: String, val size: Long)
     internal data class ObjectBytes(val meta: Meta, val bytes: ByteArray)
@@ -80,11 +84,32 @@ internal object S3ReadOnlyProbe {
 
     private fun execute(
         session: String, method: String, manifestId: String,
-        ifMatch: String = "", maxBytes: Int,
+        ifMatch: String, maxBytes: Int,
+    ): ObjectBytes = executeAuthorized(
+        session, method, manifestId, ifMatch, maxBytes, false
+    )
+
+    private fun executeRevision(
+        session: String, method: String, revisionId: String,
+        ifMatch: String, maxBytes: Int,
+    ): ObjectBytes = executeAuthorized(
+        session, method, revisionId, ifMatch, maxBytes, true
+    )
+
+    private fun executeAuthorized(
+        session: String, method: String, objectId: String,
+        ifMatch: String, maxBytes: Int, revision: Boolean,
     ): ObjectBytes {
-        val signed = json(NativeBridge.signS3ReadProbe(
-            session, method, manifestId, ifMatch, utcStamp()
-        ))
+        val stamp = utcStamp()
+        val signed = json(if (revision) {
+            NativeBridge.signS3RevisionProbe(
+                session, objectId, method, ifMatch, stamp
+            )
+        } else {
+            NativeBridge.signS3ReadProbe(
+                session, method, objectId, ifMatch, stamp
+            )
+        })
         val target = URL(signed.getString("url"))
         // Even a compromised untrusted manifest cannot trigger a redirect or
         // a request outside the fixed Yandex S3 server.
@@ -163,6 +188,9 @@ internal object S3ReadOnlyProbe {
 
     private fun readStable(session: String, manifestId: String, maxBytes: Int): ObjectBytes =
         readStableFrom(session, manifestId, maxBytes, ::execute)
+
+    private fun readStableRevision(session: String, revisionId: String): ObjectBytes =
+        readStableFrom(session, revisionId, MAX_REVISION_JSON, ::executeRevision)
 
     private fun parentId(json: JSONObject): String? {
         if (!json.has("previous_manifest_id") || json.isNull("previous_manifest_id")) {
@@ -255,10 +283,51 @@ internal object S3ReadOnlyProbe {
                 index.getInt("revisions") != proof.getInt("revisions")) {
                 throw IOException("Недопустимый индекс S3")
             }
+            val supported = index.optBoolean("metadataPreviewSupported", false)
+            var checkedRevisions = 0
+            if (supported) {
+                val refs = index.getJSONArray("revisionIds")
+                if (refs.length() != index.getInt("revisions") ||
+                    refs.length() > MAX_REVISION_PREVIEW) {
+                    throw IOException("Недопустимый список ревизий S3")
+                }
+                val revisionBytes = ArrayList<ByteArray>()
+                val revisionIds = HashSet<String>()
+                try {
+                    for (i in 0 until refs.length()) {
+                        val revisionId = refs.getString(i)
+                        if (!revisionIds.add(revisionId)) {
+                            throw IOException("Дублирующаяся ревизия S3")
+                        }
+                        // Native signer only accepts IDs from the same rooted,
+                        // already verified index, never arbitrary object keys.
+                        revisionBytes.add(readStableRevision(session, revisionId).bytes)
+                    }
+                    val afterRevisions = readStable(session, "", MAX_ROOT)
+                    if (first.meta != afterRevisions.meta ||
+                        !first.bytes.contentEquals(afterRevisions.bytes)) {
+                        throw IOException("S3 head изменился при чтении ревизий")
+                    }
+                    val metadata = json(NativeBridge.verifyS3RevisionsProbe(
+                        session, first.bytes, revisionBytes.toTypedArray()
+                    ))
+                    if (!metadata.optBoolean("metadataChecked", false) ||
+                        metadata.optBoolean("remoteOwnerVerified", true) ||
+                        metadata.optBoolean("synced", true) ||
+                        metadata.getInt("revisionsChecked") != index.getInt("revisions")) {
+                        throw IOException("Метаданные ревизий S3 не подтверждены")
+                    }
+                    checkedRevisions = metadata.getInt("revisionsChecked")
+                } finally {
+                    firstClear(revisionBytes)
+                }
+            }
             return Report(
                 proof.getLong("generation"), proof.getInt("manifestsChecked"),
                 proof.getInt("revisions"), index.getInt("documents"),
                 index.getInt("shardsChecked"),
+                metadataRevisionsChecked = checkedRevisions,
+                metadataPreviewSupported = supported,
             )
         } finally {
             // Credentials are dropped in native memory even on timeout or UI

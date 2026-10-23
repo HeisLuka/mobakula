@@ -18,10 +18,14 @@ internal object NativeBridge {
     external fun beginS3ReadProbe(encrypted: ByteArray, password: CharArray): String
     external fun signS3ReadProbe(session: String, method: String, manifestId: String,
                                  ifMatch: String, utcStamp: String): String
+    external fun signS3RevisionProbe(session: String, revisionId: String,
+                                     method: String, ifMatch: String, utcStamp: String): String
     external fun verifyS3ReadProbe(session: String, head: ByteArray,
                                    manifests: Array<ByteArray>): String
     external fun verifyS3IndexProbe(session: String, head: ByteArray,
                                       latestManifest: ByteArray,
                                       shards: Array<ByteArray>): String
+    external fun verifyS3RevisionsProbe(session: String, head: ByteArray,
+                                        revisions: Array<ByteArray>): String
     external fun endS3ReadProbe(session: String): String
 }

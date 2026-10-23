@@ -51,7 +51,14 @@ internal fun S3ReadOnlyProbeButton(store: S3ProtectedInviteStore, enabled: Boole
                     ", манифестов " + result.manifestsChecked +
                     ", проверено наборов " + result.validatedShards +
                     ", документов " + result.distinctDocumentIds +
-                    ". Владелец сервера отдельно не подтверждён. " +
+                    (if (result.metadataPreviewSupported) {
+                        ", проверено метаданных ревизий " +
+                            result.metadataRevisionsChecked + ". "
+                    } else {
+                        ". Метаданные ревизий не проверены: " +
+                            "превышен лимит предпросмотра. "
+                    }) +
+                    "Владелец сервера отдельно не подтверждён. " +
                     "Синхронизация заметок не включена.",
                 style = MaterialTheme.typography.bodySmall,
             )

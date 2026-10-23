@@ -4,7 +4,7 @@
 //! Only a caller-provided Android HTTP adapter will execute these requests.
 
 use std::str::FromStr;
-use aquilum_core::sync::{OperationId, S3Keyspace};
+use aquilum_core::sync::{OperationId, RevisionId, S3Keyspace};
 use aquilum_core::sync::s3_pair_invite::{
     open_s3_pair_invite, S3PairInvite,
 };
@@ -26,6 +26,7 @@ pub enum S3ReadSignerError {
 pub enum S3ReadObject {
     CurrentHead,
     ImmutableManifest(OperationId),
+    ImmutableRevision(RevisionId),
 }
 
 /// Do not implement Debug/Serialize: a signed Authorization header is
@@ -122,6 +123,8 @@ impl S3ReadSigner {
             S3ReadObject::CurrentHead => self.namespace.current_head_key(),
             S3ReadObject::ImmutableManifest(id) =>
                 self.namespace.immutable_manifest_key(id),
+            S3ReadObject::ImmutableRevision(id) =>
+                self.namespace.immutable_revision_key(id),
         };
         // The typed Core keyspace can only generate ASCII unreserved plus slash.
         if !key.bytes().all(|b|
@@ -208,6 +211,16 @@ pub fn parse_manifest_id(value: &str) -> Result<S3ReadObject, S3ReadSignerError>
     Ok(S3ReadObject::ImmutableManifest(id))
 }
 
+/// Only canonical typed revision UUIDs, never an arbitrary S3 object path.
+pub fn parse_revision_id(value: &str) -> Result<RevisionId, S3ReadSignerError> {
+    let id = RevisionId::from_str(value)
+        .map_err(|_| S3ReadSignerError::InvalidObject)?;
+    if id.to_string() != value {
+        return Err(S3ReadSignerError::InvalidObject);
+    }
+    Ok(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,6 +299,19 @@ mod tests {
         other.provider = "custom".into();
         assert!(matches!(S3ReadSigner::from_authenticated_invitation(other),
             Err(S3ReadSignerError::UnsupportedProvider)));
+    }
+
+    #[test]
+    fn exact_typed_revision_is_signed_but_outside_keys_fail() {
+        let signer = S3ReadSigner::from_authenticated_invitation(source()).unwrap();
+        let id = parse_revision_id("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee").unwrap();
+        let signed = signer.sign(S3ReadObject::ImmutableRevision(id),
+            "GET", "20261024T120001Z", None).unwrap();
+        assert!(signed.url.ends_with("/revisions/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.json"));
+        assert!(parse_revision_id("../other/secret").is_err());
+        assert!(parse_revision_id("AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE").is_err());
+        assert!(signer.sign(S3ReadObject::ImmutableRevision(id),
+            "PUT", "20261024T120001Z", None).is_err());
     }
 
     #[test]
