@@ -11,6 +11,10 @@ import kotlinx.coroutines.launch
 
 class NotesViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = NotesRepository(application.applicationContext)
+    private val draftStore = DraftRecoveryStore(application.applicationContext)
+    private val checkpointIdle = DebouncedAutoSave(
+        viewModelScope, ::checkpointAfterIdle, idleMillis = 200L,
+    )
 
     var headers by mutableStateOf<List<NoteHeader>>(emptyList())
         private set
@@ -30,6 +34,12 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     private val unresolvedHistoryNotes = mutableSetOf<String>()
     private val autoSave = DebouncedAutoSave(viewModelScope, ::saveAfterIdle)
     private var autoSaveBlocked by mutableStateOf(false)
+    var recoveredDraft by mutableStateOf<DraftRecoverySuggestion?>(null)
+        private set
+    var draftCheckpointReady by mutableStateOf(false)
+        private set
+    // "Later" preserves the older backup rather than overwriting it.
+    private var preservedRecoveryId: String? = null
     var imeComposing by mutableStateOf(false)
         private set
 
@@ -38,6 +48,10 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         needsReview -> noteSaveStatus(dirty, saveEvidence)
         imeComposing && dirty -> "Ввод с клавиатуры не завершён — сохранение отложено"
         autoSaveBlocked && dirty -> "Автосохранение остановлено — сохраните вручную"
+        dirty && preservedRecoveryId == opened?.id ->
+            "Старая копия сохранена отдельно; новые изменения не резервируются"
+        dirty && draftCheckpointReady ->
+            "Черновик скопирован локально; основной файл ещё не сохранён"
         else -> noteSaveStatus(dirty, saveEvidence)
     }
     val canSave: Boolean get() = canSaveNote(dirty, saveEvidence) && !imeComposing
@@ -99,6 +113,11 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun create() = task {
+        checkpointIdle.cancel()
+        draftStore.invalidate()
+        recoveredDraft = null
+        preservedRecoveryId = null
+        draftCheckpointReady = false
         preventDuplicateCreate()
         val created = repository.create()
         opened = created
@@ -117,6 +136,11 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun open(id: String) = task {
+        checkpointIdle.cancel()
+        draftStore.invalidate()
+        recoveredDraft = null
+        preservedRecoveryId = null
+        draftCheckpointReady = false
         val note = repository.read(id)
         opened = note
         draft = note.content
@@ -127,6 +151,22 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
             NoteSaveEvidence.FILE_READ
         }
         info = null
+        val savedDraft = try {
+            draftStore.load(note.id)
+        } catch (cause: Exception) {
+            info = "Резервная копия повреждена или недоступна; основной файл не изменён"
+            null
+        }
+        if (savedDraft != null) {
+            if (savedDraft.text == note.content) {
+                // A process may die after a verified Core save but before cleanup.
+                runCatching { draftStore.clearIfRevision(note.id, savedDraft.baseHash) }
+            } else {
+                recoveredDraft = DraftRecoverySuggestion(
+                    savedDraft, changedOnDisk = savedDraft.baseHash != note.hash,
+                )
+            }
+        }
     }
 
     fun inspectPendingCreate() {
@@ -134,6 +174,11 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun importFile(uri: Uri) = task {
+        checkpointIdle.cancel()
+        draftStore.invalidate()
+        recoveredDraft = null
+        preservedRecoveryId = null
+        draftCheckpointReady = false
         preventDuplicateCreate()
         val created = repository.importFile(uri)
         opened = created
@@ -172,6 +217,12 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         if (!busy && opened != null) {
             imeComposing = composing
             draft = text
+            draftStore.invalidate()
+            checkpointIdle.cancel()
+            draftCheckpointReady = false
+            if (dirty && !imeComposing && preservedRecoveryId != opened?.id) {
+                checkpointIdle.schedule()
+            }
             info = if (dirty) "Есть несохранённые изменения" else null
             autoSave.cancel()
             if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked, imeComposing)) {
@@ -186,9 +237,73 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         if (!imeComposing) return
         imeComposing = false
         autoSave.cancel()
+        if (dirty && preservedRecoveryId != opened?.id) checkpointIdle.schedule()
         if (canScheduleAutoSave(dirty, busy, saveEvidence, autoSaveBlocked, false)) {
             autoSave.schedule()
         }
+    }
+
+    /** Debounce a local safety copy separately from File Gate verified autosave. */
+    private fun checkpointAfterIdle() {
+        val current = opened ?: return
+        if (!dirty || imeComposing || preservedRecoveryId == current.id) return
+        val snapshot = DraftSnapshot(current.id, current.hash, draft)
+        val generation = draftStore.epoch()
+        viewModelScope.launch {
+            try {
+                val stored = draftStore.checkpoint(snapshot, generation)
+                if (opened?.id == snapshot.noteId && draft == snapshot.text && dirty) {
+                    if (stored) draftCheckpointReady = true
+                    else if (generation == draftStore.epoch()) {
+                        info = "Старая резервная копия другой ревизии сохранена отдельно"
+                    }
+                }
+            } catch (cause: Exception) {
+                if (opened?.id == snapshot.noteId && dirty && error == null) {
+                    info = "Резервная копия черновика не записана; сохраните файл вручную"
+                }
+            }
+        }
+    }
+
+    fun dismissRecoveredDraft() {
+        preservedRecoveryId = recoveredDraft?.snapshot?.noteId
+        recoveredDraft = null  // The on-disk copy is intentionally preserved.
+    }
+
+    fun removeRecoveredDraft() = task {
+        val candidate = recoveredDraft ?: return@task
+        draftStore.invalidate()
+        draftStore.clearIfRevision(candidate.snapshot.noteId, candidate.snapshot.baseHash)
+        recoveredDraft = null
+        preservedRecoveryId = null
+        draftCheckpointReady = false
+        info = "Резервная копия удалена; основной файл не изменён"
+    }
+
+    fun restoreRecoveredDraft() = task {
+        val candidate = recoveredDraft ?: return@task
+        val current = opened ?: return@task
+        // Never overwrite a newer revision; make the user copy conflicting text.
+        val fresh = repository.read(current.id)
+        if (candidate.snapshot.baseHash != fresh.hash) {
+            recoveredDraft = candidate.copy(changedOnDisk = true)
+            info = "Основной файл изменился; автоматическое восстановление запрещено"
+            return@task
+        }
+        opened = fresh
+        draft = candidate.snapshot.text
+        imeComposing = false
+        recoveredDraft = null
+        preservedRecoveryId = null
+        draftCheckpointReady = true  // Existing checkpoint remains on disk.
+        draftStore.invalidate()
+        checkpointIdle.schedule()
+        autoSave.cancel()
+        if (canScheduleAutoSave(dirty, false, saveEvidence, autoSaveBlocked, false)) {
+            autoSave.schedule()
+        }
+        info = "Черновик восстановлен; основной файл ещё не сохранён"
     }
 
     private fun saveAfterIdle() {
@@ -205,6 +320,8 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (!automatic) autoSave.cancel()
+        checkpointIdle.cancel()
+        draftStore.invalidate()
         if (automatic && !canScheduleAutoSave(
                 dirty, busy, saveEvidence, autoSaveBlocked, imeComposing,
             )) return
@@ -218,26 +335,49 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
             info = "Изменений нет"
             return@task
         }
+        val snapshot = DraftSnapshot(current.id, current.hash, draft)
+        // Keep a checkpoint even if File Gate fails after the attempt begins.
+        // Failure to make the safety copy must not prevent a normal Core save.
+        val checkpointed = if (preservedRecoveryId == current.id) false
+            else runCatching { draftStore.writeBeforeSave(snapshot) }.getOrDefault(false)
         val saved = repository.save(current, draft)
+        if (checkpointed) {
+            runCatching { draftStore.clearIfRevision(current.id, current.hash) }
+        }
         opened = saved
         draft = saved.content
         saveEvidence = NoteSaveEvidence.VERIFIED
         autoSaveBlocked = false
+        draftCheckpointReady = false
         headers = repository.list()
-        info = if (automatic) "Автосохранение: файл и история проверены"
-            else "Файл и история проверены"
+        info = when {
+            !checkpointed -> "Файл и история проверены; старая копия черновика сохранена отдельно"
+            automatic -> "Автосохранение: файл и история проверены"
+            else -> "Файл и история проверены"
+        }
         }
     }
 
-    fun discard() {
-        val current = opened ?: return
-        if (busy) return
+    fun discard() = discardChanges(exit = false)
+    fun discardAndBack() = discardChanges(exit = true)
+
+    private fun discardChanges(exit: Boolean) = task {
+        val current = opened ?: return@task
         autoSave.cancel()
-        autoSaveBlocked = false
-        imeComposing = false
+        checkpointIdle.cancel()
+        draftStore.invalidate()
+        // Delete only this revision's backup, never an earlier conflicting copy.
+        if (preservedRecoveryId != current.id) {
+            draftStore.clearIfRevision(current.id, current.hash)
+        }
         draft = current.content
-        error = null
-        info = "Изменения отменены"
+        autoSaveBlocked = false
+        draftCheckpointReady = false
+        imeComposing = false
+        recoveredDraft = null
+        if (exit) preservedRecoveryId = null
+        if (exit) opened = null
+        info = if (exit) null else "Изменения отменены"
     }
 
     fun back() {
@@ -246,7 +386,12 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
             error = "Сначала сохраните или отмените изменения"
         } else {
             autoSave.cancel()
+            checkpointIdle.cancel()
+            draftStore.invalidate()
             autoSaveBlocked = false
+            draftCheckpointReady = false
+            recoveredDraft = null
+            preservedRecoveryId = null
             opened = null
             imeComposing = false
             saveEvidence = NoteSaveEvidence.FILE_READ

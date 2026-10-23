@@ -16,9 +16,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.Alignment
@@ -34,6 +36,7 @@ fun NotesScreen(modifier: Modifier = Modifier, state: NotesViewModel = viewModel
     var tab by rememberSaveable { mutableStateOf("notes") }
     var askDiscard by rememberSaveable { mutableStateOf(false) }
     var exportId by rememberSaveable { mutableStateOf<String?>(null) }
+    val clipboard = LocalClipboardManager.current
 
     fun backToList() {
         if (state.dirty) askDiscard = true else {
@@ -66,14 +69,47 @@ fun NotesScreen(modifier: Modifier = Modifier, state: NotesViewModel = viewModel
             text = { Text("Вернуться без сохранения текста заметки?") },
             confirmButton = {
                 TextButton(onClick = {
-                    state.discard()
-                    state.back()
+                    state.discardAndBack()
                     tab = "notes"
                     askDiscard = false
                 }) { Text("Не сохранять") }
             },
             dismissButton = {
                 TextButton(onClick = { askDiscard = false }) { Text("Остаться") }
+            },
+        )
+    }
+
+    state.recoveredDraft?.let { candidate ->
+        AlertDialog(
+            onDismissRequest = state::dismissRecoveredDraft,
+            title = {
+                Text(if (candidate.changedOnDisk)
+                    "Черновик и основной файл различаются"
+                    else "Найдена резервная копия черновика")
+            },
+            text = {
+                Text(if (candidate.changedOnDisk)
+                    "Файл изменился после создания копии. Автоматическое восстановление " +
+                        "запрещено. Скопируйте текст, чтобы сохранить оба варианта."
+                    else "После предыдущего запуска остались несохранённые изменения. " +
+                        "Восстановление не перезаписывает файл до проверенного сохранения.")
+            },
+            confirmButton = {
+                if (candidate.changedOnDisk) {
+                    TextButton(onClick = {
+                        clipboard.setText(AnnotatedString(candidate.snapshot.text))
+                        state.dismissRecoveredDraft()
+                    }) { Text("Скопировать текст") }
+                } else {
+                    TextButton(onClick = state::restoreRecoveredDraft) {
+                        Text("Восстановить")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = state::dismissRecoveredDraft) { Text("Позже") }
+                TextButton(onClick = state::removeRecoveredDraft) { Text("Удалить копию") }
             },
         )
     }
@@ -389,8 +425,8 @@ private fun NotesEditor(
                 OutlinedButton(onClick = onExport,
                     enabled = !state.busy && !state.dirty) { Text("Экспорт .md") }
             }
-            Text("Автосохранение после паузы ввода. Проверяйте статус: " +
-                "черновики после остановки не восстанавливаются.",
+            Text("Автосохранение после паузы ввода. Резервная копия " +
+                "черновика создаётся отдельно, но не заменяет проверенное сохранение.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
