@@ -60,3 +60,11 @@
 - A manually signed test APK uses a fixed certificate **only after** environment secrets and the approved cert fingerprint are configured. Every new `main` push `Mobile gate` build gets increasing `versionCode` from the Actions run number.
 - Test on a clean device: install device-test signed build A, create and verify a note, then install a newer **device-test signed** build B *without uninstalling*. Confirm the applicationId/certificate match and the versionCode of B exceeds A. Reopen original note in airplane mode; compare its exact content and history. An install error is a stop condition: export data, do not uninstall.
 - A device-test signer is **not** Google Play/RuStore production signer. Store migration might require explicit export/import; do not promise seamless cross-store updates.
+
+## M1 UI cold-reopen proof (emulator only)
+
+- Compose instrumentation exercises the **visible** create button, Markdown editor, manual Save and Back actions. After the UI reports a verified File Gate write, it leaves the editor and finds the note in the list.
+- A second instrumentation invocation, after `adb shell am force-stop`, launches a new Android process, opens the uniquely named note through the UI and compares its exact Cyrillic/emoji Markdown contents. It also checks that the process PID changed.
+- Opt-in runner: `python3 scripts/android/cold_reopen_probe.py --ack-force-stop --include-smoke --include-ui`. Exactly one successful Android test **and** each explicit `akula_ui_check=ui_prepared/ui_verified` receipt are required. The existing JNI + File Gate cold-reopen checks still run first.
+- **Use a disposable emulator only.** Unlike the Core no-backup fixture, this UI test creates a real test note in the app's normal local vault so that the normal launcher can see it. It does not delete, uninstall, clear data or overwrite existing notes. Do not run it on an everyday phone or a vault containing important notes.
+- This checks the first visible offline scenario, not IME edge cases, rotation, draft crash recovery, device signing or physical ARM64 acceptance. UI PASS must not be inferred from compilation alone.

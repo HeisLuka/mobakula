@@ -1,0 +1,122 @@
+package dev.heisluka.mobakula
+
+import android.os.Build
+import android.os.Bundle
+import android.os.Process
+import android.util.AtomicFile
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextReplacement
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
+import java.util.UUID
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * Real launcher UI against Akula's native File Gate.
+ * Creates a test note in the normal vault: run ONLY on a disposable emulator.
+ * Script selects each phase separately and force-stops the app between phases.
+ */
+@RunWith(AndroidJUnit4::class)
+class UiNotesTwoProcessTest {
+    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    private val marker get() = AtomicFile(File(context.noBackupFilesDir, "m1-ui-proof.json"))
+
+    private fun requirePhase(expected: String) {
+        assumeTrue("Use cold_reopen_probe.py --include-ui",
+            InstrumentationRegistry.getArguments().getString("akula_ui_phase") == expected)
+        val emulator = Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish" ||
+            Build.FINGERPRINT.contains("generic") || Build.MODEL.contains("sdk_gphone")
+        assertTrue("UI proof writes a real note: disposable emulator required", emulator)
+    }
+
+    private fun awaitTag(tag: String) {
+        compose.waitUntil(timeoutMillis = 30_000) {
+            compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun awaitTitle(title: String) {
+        compose.waitUntil(timeoutMillis = 30_000) {
+            compose.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun report(receipt: String) {
+        InstrumentationRegistry.getInstrumentation().sendStatus(0,
+            Bundle().apply { putString("akula_ui_check", receipt) })
+    }
+
+    @Test
+    fun prepareNoteThroughUi() {
+        requirePhase("prepare")
+        marker.delete()
+        val title = "UI proof " + UUID.randomUUID().toString().take(8)
+        val content = "# " + title + "\nПривет, Akula 🦈\nСтрока 2\n"
+
+        awaitTag("note_create")
+        compose.onNodeWithTag("note_create").performClick()
+        awaitTag("note_editor")
+        compose.onNodeWithTag("note_editor").performTextReplacement(content)
+        compose.onNodeWithTag("note_save").assertIsEnabled().performClick()
+        compose.waitUntil(timeoutMillis = 30_000) {
+            compose.onAllNodesWithText("Файл и история проверены")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("note_back").performClick()
+        awaitTitle(title)
+
+        val receipt = JSONObject().put("pid", Process.myPid())
+            .put("title", title).put("content", content)
+        val atomic = marker
+        val stream = atomic.startWrite()
+        try {
+            stream.write(receipt.toString().toByteArray(Charsets.UTF_8))
+            atomic.finishWrite(stream)
+        } catch (cause: Exception) {
+            atomic.failWrite(stream)
+            throw cause
+        }
+        report("ui_prepared")
+    }
+
+    @Test
+    fun reopenNoteThroughUi() {
+        requirePhase("verify")
+        val atomic = marker
+        assertTrue("UI prepare marker missing", atomic.baseFile.isFile)
+        val saved = JSONObject(atomic.openRead().use {
+            it.readBytes().toString(Charsets.UTF_8)
+        })
+        assertNotEquals("Android app process did not restart",
+            saved.getInt("pid"), Process.myPid())
+
+        val title = saved.getString("title")
+        awaitTitle(title)
+        compose.onNodeWithText(title).performClick()
+        awaitTag("note_editor")
+        // OutlinedTextField exposes its label as Text and the note as EditableText.
+        // assertTextEquals includes both and incorrectly fails on the label.
+        val actual = compose.onNodeWithTag("note_editor")
+            .fetchSemanticsNode().config[SemanticsProperties.EditableText].text
+        assertEquals(saved.getString("content"), actual)
+        atomic.delete()
+        report("ui_verified")
+    }
+}

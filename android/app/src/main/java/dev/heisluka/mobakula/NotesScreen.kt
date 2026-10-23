@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -241,7 +242,7 @@ private fun NotesOverview(
             if (!state.busy && state.pendingCreateId == null) {
                 FloatingActionButton(
                     onClick = state::create,
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp).testTag("note_create"),
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                 ) {
@@ -316,8 +317,10 @@ private fun NotesEditor(
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton(onClick = onBack, enabled = !state.busy) { Text("← Назад") }
-            Button(onClick = state::save, enabled = !state.busy && state.canSave) {
+            TextButton(onClick = onBack, enabled = !state.busy,
+                modifier = Modifier.testTag("note_back")) { Text("← Назад") }
+            Button(onClick = state::save, enabled = !state.busy && state.canSave,
+                modifier = Modifier.testTag("note_save")) {
                 Text("Сохранить")
             }
         }
@@ -343,7 +346,8 @@ private fun NotesEditor(
                     }
                 }
             },
-            modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(focusRequester),
+            modifier = Modifier.fillMaxWidth().weight(1f)
+                .focusRequester(focusRequester).testTag("note_editor"),
             enabled = !state.busy,
             shape = RoundedCornerShape(18.dp),
             textStyle = MaterialTheme.typography.bodyLarge,
