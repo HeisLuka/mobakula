@@ -108,9 +108,15 @@ jobs:
         id: runtime
         env:
           RUN_ANDROID_RUNTIME: ${{ inputs.android_runtime || 'false' }}
+          PROOF_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || '' }}
         shell: bash
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$RUN_ANDROID_RUNTIME" == "true" ]]; then
+          # One-off restricted PR probe. Remove this exception after collecting
+          # emulator evidence; production CI remains manual opt-in.
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$RUN_ANDROID_RUNTIME" == "true" ]] \
+            || [[ "$GITHUB_EVENT_NAME" == "pull_request" \
+              && "$GITHUB_HEAD_REF" == "test/android-cold-proof-20261023" \
+              && "$PROOF_HEAD_REPO" == "$GITHUB_REPOSITORY" ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
