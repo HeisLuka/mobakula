@@ -83,6 +83,7 @@ def main() -> int:
             for phase, method, receipt in (
                 ("prepare", "prepareNoteThroughUi", "ui_prepared"),
                 ("verify", "reopenNoteThroughUi", "ui_verified"),
+                ("recreate", "recreateActivityRetainsPendingDraftAndResumesAutoSave", "ui_recreated"),
             ):
                 run("shell", "am", "force-stop", APP, timeout=30)
                 output = run(
@@ -93,6 +94,7 @@ def main() -> int:
                 verify_instrumentation(output, receipt=receipt, receipt_key="akula_ui_check")
                 print(f"PASS: Compose UI {phase}", flush=True)
             print("PASS: UI create, edit, save and reopen across Android processes", flush=True)
+            print("PASS: unsaved editor retained after Activity recreation; autosave resumed", flush=True)
         return 0
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as cause:
         print(f"FAIL: {cause}", file=sys.stderr)

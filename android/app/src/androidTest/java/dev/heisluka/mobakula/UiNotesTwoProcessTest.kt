@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.lifecycle.ViewModelProvider
 import java.io.File
 import java.util.UUID
 import org.json.JSONObject
@@ -94,6 +95,46 @@ class UiNotesTwoProcessTest {
             throw cause
         }
         report("ui_prepared")
+    }
+
+    @Test
+    fun recreateActivityRetainsPendingDraftAndResumesAutoSave() {
+        requirePhase("recreate")
+        val title = "Recreation proof " + UUID.randomUUID().toString().take(8)
+        val expected = "# " + title + "\nЧерновик после пересоздания: 你好, э🙂\n"
+
+        awaitTag("note_create")
+        compose.onNodeWithTag("note_create").performClick()
+        awaitTag("note_editor")
+        // Exercise the actual editor first, then synthesize an in-progress
+        // composition state in the ViewModel: Compose's SetText semantics do not
+        // generate native IME composing spans. This is NOT a physical IME test.
+        compose.onNodeWithTag("note_editor")
+            .performTextReplacement("# " + title + "\nНачальный текст")
+        val state = ViewModelProvider(compose.activity)[NotesViewModel::class.java]
+        compose.runOnUiThread { state.update(expected, composing = true) }
+        compose.waitUntil(timeoutMillis = 15_000) {
+            compose.onNodeWithTag("note_editor")
+                .fetchSemanticsNode().config[SemanticsProperties.EditableText].text == expected
+        }
+        compose.runOnIdle {
+            assertTrue("Before recreation this must be an unsaved draft", state.dirty)
+            assertTrue("Before recreation input is marked composing", state.imeComposing)
+        }
+
+        compose.activityRule.scenario.recreate()
+        awaitTag("note_editor")
+        val actual = compose.onNodeWithTag("note_editor")
+            .fetchSemanticsNode().config[SemanticsProperties.EditableText].text
+        assertEquals("Activity recreation dropped editor contents", expected, actual)
+
+        // LaunchedEffect(state.opened?.id) must release the stale composing
+        // state; otherwise the debounce save never starts after recreation.
+        compose.waitUntil(timeoutMillis = 15_000) { !state.imeComposing }
+        compose.waitUntil(timeoutMillis = 30_000) { !state.dirty && !state.busy }
+        compose.onNodeWithTag("note_back").performClick()
+        awaitTitle(title)
+        report("ui_recreated")
     }
 
     @Test
