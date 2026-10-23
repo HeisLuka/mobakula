@@ -58,6 +58,12 @@ internal fun S3ReadOnlyProbeButton(store: S3ProtectedInviteStore, enabled: Boole
                         ". Метаданные ревизий не проверены: " +
                             "превышен лимит предпросмотра. "
                     }) +
+                    (if (result.contentPreviewSupported) {
+                        "Проверено содержимого: " + result.verifiedBlobCount +
+                            " объектов, " + result.verifiedBlobBytes + " байт. "
+                    } else {
+                        "Содержимое заметок не проверено (лимит предпросмотра). "
+                    }) +
                     "Владелец сервера отдельно не подтверждён. " +
                     "Синхронизация заметок не включена.",
                 style = MaterialTheme.typography.bodySmall,

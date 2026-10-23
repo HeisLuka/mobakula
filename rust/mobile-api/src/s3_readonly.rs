@@ -27,6 +27,7 @@ pub enum S3ReadObject {
     CurrentHead,
     ImmutableManifest(OperationId),
     ImmutableRevision(RevisionId),
+    ImmutableBlob(String),
 }
 
 /// Do not implement Debug/Serialize: a signed Authorization header is
@@ -125,6 +126,9 @@ impl S3ReadSigner {
                 self.namespace.immutable_manifest_key(id),
             S3ReadObject::ImmutableRevision(id) =>
                 self.namespace.immutable_revision_key(id),
+            S3ReadObject::ImmutableBlob(hash) => self.namespace
+                .immutable_blob_key(&hash)
+                .map_err(|_| S3ReadSignerError::InvalidObject)?,
         };
         // The typed Core keyspace can only generate ASCII unreserved plus slash.
         if !key.bytes().all(|b|
@@ -311,6 +315,22 @@ mod tests {
         assert!(parse_revision_id("../other/secret").is_err());
         assert!(parse_revision_id("AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE").is_err());
         assert!(signer.sign(S3ReadObject::ImmutableRevision(id),
+            "PUT", "20261024T120001Z", None).is_err());
+    }
+
+    #[test]
+    fn immutable_blob_signer_accepts_only_exact_hash_and_read_methods() {
+        let signer = S3ReadSigner::from_authenticated_invitation(source()).unwrap();
+        let hash = "a".repeat(64);
+        let signed = signer.sign(S3ReadObject::ImmutableBlob(hash.clone()),
+            "GET", "20261024T120001Z", None).unwrap();
+        assert!(signed.url.ends_with(&format!("/blobs/{hash}")));
+        let upper = "F".repeat(64);
+        for invalid in ["../escape", "f", upper.as_str()] {
+            assert!(signer.sign(S3ReadObject::ImmutableBlob(invalid.to_owned()),
+                "GET", "20261024T120001Z", None).is_err());
+        }
+        assert!(signer.sign(S3ReadObject::ImmutableBlob(hash),
             "PUT", "20261024T120001Z", None).is_err());
     }
 

@@ -15,6 +15,9 @@ use mobakula_mobile_api::s3_revisions::{
     collect_untrusted_revision_refs, inspect_untrusted_revision_records,
     MAX_REVISION_PREVIEW, MAX_REVISION_JSON_BYTES,
 };
+use mobakula_mobile_api::s3_blobs::{
+    collect_bounded_blob_expectations, S3BlobExpectation, S3BlobProofError,
+};
 use mobakula_mobile_api::s3_revisions::S3RevisionRefV1;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::{Value, json};
@@ -28,17 +31,19 @@ const MAX_MANIFEST_BYTES: usize = 512 * 1024;
 const MAX_INDEX_SHARDS: usize = 16;
 const MAX_INDEX_SHARD_BYTES: usize = 128 * 1024;
 const MAX_CHAIN_BYTES: usize = 8 * 1024 * 1024;
-const MAX_READ_SIGNATURES: usize = 640;
+pub(super) const MAX_READ_SIGNATURES: usize = 768;
 const SESSION_TTL: Duration = Duration::from_secs(180);
 
-struct Session {
+pub(super) struct Session {
     id: String,
-    signer: S3ReadSigner,
+    pub(super) signer: S3ReadSigner,
     expires_at: Instant,
-    signatures: usize,
+    pub(super) signatures: usize,
     ancestry_head_sha256: Option<[u8;32]>,
     revision_index_head_sha256: Option<[u8;32]>,
     revision_refs: Vec<S3RevisionRefV1>,
+    pub(super) blob_head_sha256: Option<[u8;32]>,
+    pub(super) blob_expectations: Vec<S3BlobExpectation>,
 }
 static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
 
@@ -46,18 +51,18 @@ fn session_slot() -> &'static Mutex<Option<Session>> {
     SESSION.get_or_init(|| Mutex::new(None))
 }
 
-fn fault(code: &str) -> Value {
+pub(super) fn fault(code: &str) -> Value {
     json!({"ok":false,"code":code,"message":"S3 read-only probe rejected"})
 }
-fn result_string(mut env: JNIEnv, response: Value) -> jstring {
+pub(super) fn result_string(mut env: JNIEnv, response: Value) -> jstring {
     env.new_string(response.to_string())
         .map_or(ptr::null_mut(), |value| value.into_raw())
 }
-fn jtext(env: &mut JNIEnv, input: &JString) -> Result<String, &'static str> {
+pub(super) fn jtext(env: &mut JNIEnv, input: &JString) -> Result<String, &'static str> {
     env.get_string(input).map(|s| s.to_string_lossy().into_owned())
         .map_err(|_| "jni")
 }
-fn read_array(env: &JNIEnv, array: &JByteArray, max: usize) -> Result<Vec<u8>, &'static str> {
+pub(super) fn read_array(env: &JNIEnv, array: &JByteArray, max: usize) -> Result<Vec<u8>, &'static str> {
     let len = env.get_array_length(array).map_err(|_| "jni")? as usize;
     if len == 0 || len > max { return Err("too_large"); }
     let mut signed = vec![0i8; len];
@@ -79,7 +84,7 @@ fn new_id() -> Result<String, &'static str> {
     for b in nonce { id.push_str(&format!("{b:02x}")); }
     Ok(id)
 }
-fn with_session<T>(
+pub(super) fn with_session<T>(
     id: &str, callback: impl FnOnce(&mut Session) -> Result<T, &'static str>,
 ) -> Result<T, &'static str> {
     let mut guard = session_slot().lock().map_err(|_| "state")?;
@@ -116,6 +121,8 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_beginS3ReadProbe(
             ancestry_head_sha256: None,
             revision_index_head_sha256: None,
             revision_refs: Vec::new(),
+            blob_head_sha256: None,
+            blob_expectations: Vec::new(),
         });
         Ok::<Value, &'static str>(json!({"ok":true,"data":scope}))
     }));
@@ -189,6 +196,8 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3ReadProbe
             slot.ancestry_head_sha256 = None;
             slot.revision_index_head_sha256 = None;
             slot.revision_refs.clear();
+            slot.blob_head_sha256 = None;
+            slot.blob_expectations.clear();
             let slices: Vec<&[u8]> = chain.iter().map(Vec::as_slice).collect();
             let proof = check_untrusted_genesis_chain(
                 slot.signer.prefix(), &slot.signer.cloud_vault_id(),
@@ -242,6 +251,8 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3IndexProb
         with_session(&id, |session| {
             session.revision_refs.clear();
             session.revision_index_head_sha256 = None;
+            session.blob_head_sha256 = None;
+            session.blob_expectations.clear();
             let digest = ring::digest::digest(&ring::digest::SHA256, &head);
             if session.ancestry_head_sha256.as_ref().map(|x| x.as_slice())
                 != Some(digest.as_ref())
@@ -352,6 +363,9 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3Revisions
             raw.push(bytes);
         }
         with_session(&id, |slot| {
+            // A failed recheck must revoke any previously approved blob set.
+            slot.blob_head_sha256 = None;
+            slot.blob_expectations.clear();
             let digest = ring::digest::digest(&ring::digest::SHA256, &root);
             if slot.revision_index_head_sha256.as_ref().map(|x| x.as_slice())
                 != Some(digest.as_ref())
@@ -361,12 +375,30 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3Revisions
             let slices: Vec<&[u8]> = raw.iter().map(Vec::as_slice).collect();
             let preview = inspect_untrusted_revision_records(&slot.revision_refs, &slices)
                 .map_err(|_| "invalid_revision_metadata")?;
+            let selection = collect_bounded_blob_expectations(&slot.revision_refs, &slices);
+            let can_read_blobs = !matches!(&selection, Err(S3BlobProofError::PreviewLimit));
+            let candidates = match selection {
+                Ok(items) => items,
+                Err(S3BlobProofError::PreviewLimit) => Vec::new(),
+                Err(_) => return Err("invalid_blob_references"),
+            };
+            let blob_refs: Vec<Value> = candidates.iter()
+                .map(|item| json!({"hash":item.blake3,"bytes":item.bytes}))
+                .collect();
+            if can_read_blobs {
+                let mut identity = [0u8;32];
+                identity.copy_from_slice(digest.as_ref());
+                slot.blob_head_sha256 = Some(identity);
+                slot.blob_expectations = candidates;
+            }
             Ok(json!({"ok":true,"data":{
                 "revisionsChecked":preview.revisions_checked,
                 "contentRevisions":preview.content_revisions,
                 "renameRevisions":preview.rename_revisions,
                 "tombstones":preview.tombstones,
                 "metadataChecked":true,
+                "blobPreviewSupported":can_read_blobs,
+                "blobRefs":blob_refs,
                 "remoteOwnerVerified":false,"synced":false
             }}))
         })

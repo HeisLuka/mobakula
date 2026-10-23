@@ -27,5 +27,9 @@ internal object NativeBridge {
                                       shards: Array<ByteArray>): String
     external fun verifyS3RevisionsProbe(session: String, head: ByteArray,
                                         revisions: Array<ByteArray>): String
+    external fun signS3BlobProbe(session: String, blobHash: String,
+                                 method: String, ifMatch: String, utcStamp: String): String
+    external fun verifyS3BlobsProbe(session: String, head: ByteArray,
+                                    blobs: Array<ByteArray>): String
     external fun endS3ReadProbe(session: String): String
 }

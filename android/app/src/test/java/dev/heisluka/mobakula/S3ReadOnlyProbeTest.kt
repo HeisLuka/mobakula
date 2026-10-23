@@ -107,4 +107,40 @@ class S3ReadOnlyProbeTest {
         }
     }
 
+    @Test
+    fun emptyBlobIsAllowedOnlyForExplicitContentObjectReads() {
+        org.junit.Assert.assertThrows(java.io.IOException::class.java) {
+            S3ReadOnlyProbe.checkedMeta(200, "\"zero\"", null, 0L, 1024)
+        }
+        val zero = S3ReadOnlyProbe.checkedMeta(
+            200, "\"zero\"", null, 0L, 1024, allowEmpty = true
+        )
+        org.junit.Assert.assertEquals(0L, zero.size)
+        val response = S3ReadOnlyProbe.readStableFrom(
+            "blob-session", "content-hash", 1024, allowEmpty = true,
+        ) { _, method, _, _, _ ->
+            S3ReadOnlyProbe.ObjectBytes(
+                zero, if (method == "GET") byteArrayOf() else byteArrayOf()
+            )
+        }
+        org.junit.Assert.assertEquals(0, response.bytes.size)
+    }
+
+    @Test
+    fun emptyManifestsAndOversizedBlobHeadersStayRejected() {
+        org.junit.Assert.assertThrows(java.io.IOException::class.java) {
+            S3ReadOnlyProbe.readStableFrom("s", "manifest", 1024) {
+                _, _, _, _, _ ->
+                S3ReadOnlyProbe.ObjectBytes(
+                    S3ReadOnlyProbe.Meta("\"zero\"", 0), byteArrayOf()
+                )
+            }
+        }
+        org.junit.Assert.assertThrows(java.io.IOException::class.java) {
+            S3ReadOnlyProbe.checkedMeta(
+                200, "\"oversize\"", null, 1025L, 1024, allowEmpty = true
+            )
+        }
+    }
+
 }

@@ -23,6 +23,12 @@ internal object S3ReadOnlyProbe {
     private const val MAX_SHARD = 128 * 1024
     private const val MAX_REVISION_JSON = 64 * 1024
     private const val MAX_REVISION_PREVIEW = 64
+    private const val MAX_BLOB_COUNT = 16
+    private const val MAX_BLOB_BYTES = 1024 * 1024
+    private const val MAX_BLOB_TOTAL = 8L * 1024 * 1024
+    private const val OBJECT_MANIFEST = 0
+    private const val OBJECT_REVISION = 1
+    private const val OBJECT_BLOB = 2
     private const val MAX_PREVIEW_SHARDS = 16
     private const val MAX_CHAIN_TOTAL = 8 * 1024 * 1024
     private const val MAX_ANCESTORS = 128
@@ -39,6 +45,9 @@ internal object S3ReadOnlyProbe {
         val verifiedOnlyBytes: Boolean = true,
         val metadataRevisionsChecked: Int = 0,
         val metadataPreviewSupported: Boolean = false,
+        val contentPreviewSupported: Boolean = false,
+        val verifiedBlobCount: Int = 0,
+        val verifiedBlobBytes: Long = 0,
     )
     internal data class Meta(val etag: String, val size: Long)
     internal data class ObjectBytes(val meta: Meta, val bytes: ByteArray)
@@ -64,7 +73,7 @@ internal object S3ReadOnlyProbe {
     /** Fail closed before reading a body, including on redirects and HTTP errors. */
     internal fun checkedMeta(
         status: Int, etag: String?, contentEncoding: String?,
-        length: Long, maxBytes: Int,
+        length: Long, maxBytes: Int, allowEmpty: Boolean = false,
     ): Meta {
         if (status != HttpURLConnection.HTTP_OK) {
             throw IOException("S3 HTTP " + status + " cannot establish a stable read")
@@ -76,7 +85,8 @@ internal object S3ReadOnlyProbe {
             !contentEncoding.equals("identity", ignoreCase = true)) {
             throw IOException("S3 returned compressed content")
         }
-        if (length < 1 || length > maxBytes.toLong()) {
+        if (length < (if (allowEmpty) 0L else 1L) ||
+            length > maxBytes.toLong()) {
             throw IOException("S3 object outside read bounds")
         }
         return Meta(etag, length)
@@ -86,29 +96,39 @@ internal object S3ReadOnlyProbe {
         session: String, method: String, manifestId: String,
         ifMatch: String, maxBytes: Int,
     ): ObjectBytes = executeAuthorized(
-        session, method, manifestId, ifMatch, maxBytes, false
+        session, method, manifestId, ifMatch, maxBytes, OBJECT_MANIFEST
     )
 
     private fun executeRevision(
         session: String, method: String, revisionId: String,
         ifMatch: String, maxBytes: Int,
     ): ObjectBytes = executeAuthorized(
-        session, method, revisionId, ifMatch, maxBytes, true
+        session, method, revisionId, ifMatch, maxBytes, OBJECT_REVISION
+    )
+
+    private fun executeBlob(
+        session: String, method: String, blobHash: String,
+        ifMatch: String, maxBytes: Int,
+    ): ObjectBytes = executeAuthorized(
+        session, method, blobHash, ifMatch, maxBytes, OBJECT_BLOB
     )
 
     private fun executeAuthorized(
         session: String, method: String, objectId: String,
-        ifMatch: String, maxBytes: Int, revision: Boolean,
+        ifMatch: String, maxBytes: Int, kind: Int,
     ): ObjectBytes {
         val stamp = utcStamp()
-        val signed = json(if (revision) {
-            NativeBridge.signS3RevisionProbe(
-                session, objectId, method, ifMatch, stamp
-            )
-        } else {
-            NativeBridge.signS3ReadProbe(
+        val signed = json(when (kind) {
+            OBJECT_MANIFEST -> NativeBridge.signS3ReadProbe(
                 session, method, objectId, ifMatch, stamp
             )
+            OBJECT_REVISION -> NativeBridge.signS3RevisionProbe(
+                session, objectId, method, ifMatch, stamp
+            )
+            OBJECT_BLOB -> NativeBridge.signS3BlobProbe(
+                session, objectId, method, ifMatch, stamp
+            )
+            else -> throw IOException("Недопустимый тип S3-объекта")
         })
         val target = URL(signed.getString("url"))
         // Even a compromised untrusted manifest cannot trigger a redirect or
@@ -140,6 +160,7 @@ internal object S3ReadOnlyProbe {
                 socket.responseCode, socket.getHeaderField("ETag"),
                 socket.getHeaderField("Content-Encoding"),
                 socket.contentLengthLong, maxBytes,
+                allowEmpty = kind == OBJECT_BLOB,
             )
             if (method == "HEAD") return ObjectBytes(meta, ByteArray(0))
             val buffer = ByteArray(4096)
@@ -173,6 +194,7 @@ internal object S3ReadOnlyProbe {
     /** Same production state machine, with an injected transport for offline tests. */
     internal fun readStableFrom(
         session: String, manifestId: String, maxBytes: Int,
+        allowEmpty: Boolean = false,
         fetch: (String, String, String, String, Int) -> ObjectBytes,
     ): ObjectBytes {
         val before = fetch(session, "HEAD", manifestId, "", maxBytes).meta
@@ -180,17 +202,24 @@ internal object S3ReadOnlyProbe {
         val after = fetch(session, "HEAD", manifestId, "", maxBytes).meta
         if (before != after || body.meta != before ||
             body.bytes.size.toLong() != before.size ||
-            before.size !in 1..maxBytes.toLong() || !isPermittedEtag(before.etag)) {
+            before.size < (if (allowEmpty) 0L else 1L) ||
+            before.size > maxBytes.toLong() || !isPermittedEtag(before.etag)) {
             throw IOException("S3-объект изменился при чтении")
         }
         return body
     }
 
     private fun readStable(session: String, manifestId: String, maxBytes: Int): ObjectBytes =
-        readStableFrom(session, manifestId, maxBytes, ::execute)
+        readStableFrom(session, manifestId, maxBytes, fetch = ::execute)
 
     private fun readStableRevision(session: String, revisionId: String): ObjectBytes =
-        readStableFrom(session, revisionId, MAX_REVISION_JSON, ::executeRevision)
+        readStableFrom(session, revisionId, MAX_REVISION_JSON, fetch = ::executeRevision)
+
+    private fun readStableBlob(session: String, blobHash: String): ObjectBytes =
+        readStableFrom(
+            session, blobHash, MAX_BLOB_BYTES, allowEmpty = true,
+            fetch = ::executeBlob
+        )
 
     private fun parentId(json: JSONObject): String? {
         if (!json.has("previous_manifest_id") || json.isNull("previous_manifest_id")) {
@@ -285,6 +314,9 @@ internal object S3ReadOnlyProbe {
             }
             val supported = index.optBoolean("metadataPreviewSupported", false)
             var checkedRevisions = 0
+            var checkedBlobs = 0
+            var checkedBlobBytes = 0L
+            var blobsSupported = false
             if (supported) {
                 val refs = index.getJSONArray("revisionIds")
                 if (refs.length() != index.getInt("revisions") ||
@@ -318,6 +350,60 @@ internal object S3ReadOnlyProbe {
                         throw IOException("Метаданные ревизий S3 не подтверждены")
                     }
                     checkedRevisions = metadata.getInt("revisionsChecked")
+                    blobsSupported = metadata.optBoolean("blobPreviewSupported", false)
+                    if (blobsSupported) {
+                        val allowed = metadata.getJSONArray("blobRefs")
+                        if (allowed.length() > MAX_BLOB_COUNT) {
+                            throw IOException("Превышен лимит S3-объектов")
+                        }
+                        val received = ArrayList<ByteArray>()
+                        val seenHashes = HashSet<String>()
+                        var totalBlobBytes = 0L
+                        try {
+                            for (i in 0 until allowed.length()) {
+                                val item = allowed.getJSONObject(i)
+                                val hash = item.getString("hash")
+                                val length = item.getLong("bytes")
+                                if (!Regex("[0-9a-f]{64}").matches(hash) ||
+                                    !seenHashes.add(hash) ||
+                                    length !in 0L..MAX_BLOB_BYTES.toLong()) {
+                                    throw IOException("Недопустимая ссылка на S3 blob")
+                                }
+                                totalBlobBytes += length
+                                if (totalBlobBytes > MAX_BLOB_TOTAL) {
+                                    throw IOException("S3 blob превышает бюджет")
+                                }
+                                // Native signer only accepts hashes derived
+                                // from verified revision metadata in this session.
+                                val blob = readStableBlob(session, hash)
+                                if (blob.meta.size != length) {
+                                    throw IOException("Размер S3 blob не совпадает с ревизией")
+                                }
+                                received.add(blob.bytes)
+                            }
+                            // A complete root/ETag reread fences every blob,
+                            // not just the first manifest or revision.
+                            val afterBlobs = readStable(session, "", MAX_ROOT)
+                            if (first.meta != afterBlobs.meta ||
+                                !first.bytes.contentEquals(afterBlobs.bytes)) {
+                                throw IOException("S3 head изменился при чтении содержимого")
+                            }
+                            val proofBlobs = json(NativeBridge.verifyS3BlobsProbe(
+                                session, first.bytes, received.toTypedArray()
+                            ))
+                            if (!proofBlobs.optBoolean("contentChecked", false) ||
+                                proofBlobs.optBoolean("remoteOwnerVerified", true) ||
+                                proofBlobs.optBoolean("synced", true) ||
+                                proofBlobs.getInt("blobsChecked") != allowed.length() ||
+                                proofBlobs.getLong("bytesChecked") != totalBlobBytes) {
+                                throw IOException("S3 blob не прошёл проверку целостности")
+                            }
+                            checkedBlobs = proofBlobs.getInt("blobsChecked")
+                            checkedBlobBytes = proofBlobs.getLong("bytesChecked")
+                        } finally {
+                            firstClear(received)
+                        }
+                    }
                 } finally {
                     firstClear(revisionBytes)
                 }
@@ -328,6 +414,9 @@ internal object S3ReadOnlyProbe {
                 index.getInt("shardsChecked"),
                 metadataRevisionsChecked = checkedRevisions,
                 metadataPreviewSupported = supported,
+                contentPreviewSupported = blobsSupported,
+                verifiedBlobCount = checkedBlobs,
+                verifiedBlobBytes = checkedBlobBytes,
             )
         } finally {
             // Credentials are dropped in native memory even on timeout or UI
