@@ -20,6 +20,9 @@ application with a test script.
    against the fingerprint the owner stored outside the downloaded artifact.
 
 No signed-A/B update is confirmed merely because the signing workflow exists.
+The downloaded provenance file is not an independently authenticated GitHub
+attestation; obtain it from the trusted workflow and check the certificate
+against the separate owner fingerprint.
 
 ## Read-only device gate
 
@@ -53,7 +56,7 @@ or `force-stop`.
 ## Physical phone acceptance (manual, real app)
 
 After a passing preflight, **only the owner/tester** decides whether to install
-via Android or `adb install -r mobakula-device-test.apk`. Do not clear app data.
+via Android or `adb install -r /path/to/mobakula-device-test.apk`. Do not clear app data.
 On a clean test setup, record the phone model, Android version and application
 build (but no device serial or note contents in public CI logs). Verify:
 
