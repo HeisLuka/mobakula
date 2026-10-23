@@ -28,9 +28,15 @@ private fun readBoundedInvitation(context: Context, uri: Uri): ByteArray {
     return stream.use {
         val output = ByteArrayOutputStream()
         val buffer = ByteArray(2048)
+        var emptyReads = 0
         while (true) {
             val count = it.read(buffer)
             if (count < 0) break
+            if (count == 0) {
+                if (++emptyReads > 8) throw IOException("Не удалось дочитать файл")
+                continue
+            }
+            emptyReads = 0
             if (output.size() + count > MAX_INVITATION_BYTES) {
                 throw IOException("Файл превышает 16 КиБ")
             }
@@ -55,6 +61,7 @@ internal fun S3InvitePreviewCard() {
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
+            password = ""
             envelope = null
             preview = null
             failure = null
