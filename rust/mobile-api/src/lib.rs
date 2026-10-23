@@ -42,3 +42,6 @@ pub mod s3_revisions;
 
 /// Exact content hash and length proof; no File Gate write authority.
 pub mod s3_blobs;
+
+/// Untrusted, read-only additive receive candidates; no local File Gate writes.
+pub mod s3_receive_plan;

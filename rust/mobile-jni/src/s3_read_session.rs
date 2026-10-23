@@ -19,6 +19,7 @@ use mobakula_mobile_api::s3_blobs::{
     collect_bounded_blob_expectations, S3BlobExpectation, S3BlobProofError,
 };
 use mobakula_mobile_api::s3_revisions::S3RevisionRefV1;
+use mobakula_mobile_api::s3_receive_plan::RevisionRecord;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::{Value, json};
 use std::{ptr, sync::{Mutex, OnceLock}, time::{Duration, Instant}};
@@ -44,6 +45,7 @@ pub(super) struct Session {
     revision_refs: Vec<S3RevisionRefV1>,
     pub(super) blob_head_sha256: Option<[u8;32]>,
     pub(super) blob_expectations: Vec<S3BlobExpectation>,
+    pub(super) receive_records: Vec<RevisionRecord>,
 }
 static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
 
@@ -123,6 +125,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_beginS3ReadProbe(
             revision_refs: Vec::new(),
             blob_head_sha256: None,
             blob_expectations: Vec::new(),
+            receive_records: Vec::new(),
         });
         Ok::<Value, &'static str>(json!({"ok":true,"data":scope}))
     }));
@@ -198,6 +201,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3ReadProbe
             slot.revision_refs.clear();
             slot.blob_head_sha256 = None;
             slot.blob_expectations.clear();
+            slot.receive_records.clear();
             let slices: Vec<&[u8]> = chain.iter().map(Vec::as_slice).collect();
             let proof = check_untrusted_genesis_chain(
                 slot.signer.prefix(), &slot.signer.cloud_vault_id(),
@@ -253,6 +257,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3IndexProb
             session.revision_index_head_sha256 = None;
             session.blob_head_sha256 = None;
             session.blob_expectations.clear();
+            session.receive_records.clear();
             let digest = ring::digest::digest(&ring::digest::SHA256, &head);
             if session.ancestry_head_sha256.as_ref().map(|x| x.as_slice())
                 != Some(digest.as_ref())
@@ -366,6 +371,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3Revisions
             // A failed recheck must revoke any previously approved blob set.
             slot.blob_head_sha256 = None;
             slot.blob_expectations.clear();
+            slot.receive_records.clear();
             let digest = ring::digest::digest(&ring::digest::SHA256, &root);
             if slot.revision_index_head_sha256.as_ref().map(|x| x.as_slice())
                 != Some(digest.as_ref())
@@ -386,6 +392,9 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3Revisions
                 .map(|item| json!({"hash":item.blake3,"bytes":item.bytes}))
                 .collect();
             if can_read_blobs {
+                slot.receive_records = slices.iter().map(|raw|
+                    serde_json::from_slice(raw).map_err(|_| "invalid_revision_records")
+                ).collect::<Result<Vec<RevisionRecord>, _>>()?;
                 let mut identity = [0u8;32];
                 identity.copy_from_slice(digest.as_ref());
                 slot.blob_head_sha256 = Some(identity);

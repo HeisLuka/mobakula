@@ -5,6 +5,7 @@ use mobakula_mobile_api::s3_readonly::{EMPTY_SHA256, S3ReadObject};
 use mobakula_mobile_api::s3_blobs::{
     verify_bounded_blob_bytes, MAX_BLOB_COUNT, MAX_BLOB_BYTES, MAX_BLOB_TOTAL,
 };
+use mobakula_mobile_api::s3_receive_plan::preview_untrusted_s3_additive_receive;
 use serde_json::json;
 use zeroize::Zeroizing;
 use crate::s3_read_session::{
@@ -90,10 +91,20 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3BlobsProb
             let slices: Vec<&[u8]> = raw.iter().map(|v| v.as_slice()).collect();
             let proof = verify_bounded_blob_bytes(&slot.blob_expectations, &slices)
                 .map_err(|_| "invalid_blob_content")?;
+            let plan = preview_untrusted_s3_additive_receive(
+                &slot.receive_records, &slot.blob_expectations, &slices,
+            ).map_err(|_| "invalid_receive_preflight")?;
             Ok(json!({"ok":true,"data":{
                 "blobsChecked":proof.blobs_checked,
                 "bytesChecked":proof.bytes_checked,
                 "contentChecked":true,
+                "receiveCandidates":plan.candidates.len(),
+                "needsReview":plan.needs_review(),
+                "forkedDocuments":plan.forked_documents,
+                "deletedDocuments":plan.deleted_documents,
+                "unsupportedDocuments":plan.unsupported_documents,
+                "localConflictsChecked":false,
+                "importAuthorized":false,
                 "remoteOwnerVerified":false,"synced":false
             }}))
         })
