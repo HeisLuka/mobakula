@@ -31,5 +31,6 @@ internal object NativeBridge {
                                  method: String, ifMatch: String, utcStamp: String): String
     external fun verifyS3BlobsProbe(session: String, head: ByteArray,
                                     blobs: Array<ByteArray>): String
+    external fun inspectS3LocalSlots(session: String, head: ByteArray): String
     external fun endS3ReadProbe(session: String): String
 }
