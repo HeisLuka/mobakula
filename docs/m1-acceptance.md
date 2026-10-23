@@ -68,3 +68,9 @@
 - Opt-in runner: `python3 scripts/android/cold_reopen_probe.py --ack-force-stop --include-smoke --include-ui`. Exactly one successful Android test **and** each explicit `akula_ui_check=ui_prepared/ui_verified` receipt are required. The existing JNI + File Gate cold-reopen checks still run first.
 - **Use a disposable emulator only.** Unlike the Core no-backup fixture, this UI test creates a real test note in the app's normal local vault so that the normal launcher can see it. It does not delete, uninstall, clear data or overwrite existing notes. Do not run it on an everyday phone or a vault containing important notes.
 - This checks the first visible offline scenario, not IME edge cases, rotation, draft crash recovery, device signing or physical ARM64 acceptance. UI PASS must not be inferred from compilation alone.
+
+## M1 UI Activity recreation (emulator proof)
+
+- The manual emulator runtime gate also runs a third UI phase `ui_recreated` in a separate disposable-emulator process. This test creates a real test note through Compose, sets an unsaved multilingual draft, and then calls Android `ActivityScenario.recreate()`.
+- It verifies the editor retains exact text, the retained ViewModel clears a stale `imeComposing` flag on recreation, and normal verified idle autosave can finish before leaving the editor. The phase returns an explicit `akula_ui_check=ui_recreated` receipt.
+- This intentionally simulates a pending composition state in the ViewModel because Compose `performTextReplacement` bypasses the system IME. **It does not test a real keyboard or a physical phone turning between landscape/portrait.** Those are still manual handset acceptance criteria. Never call a compilation-only PR CI run an emulator PASS.

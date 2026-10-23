@@ -25,7 +25,7 @@ class InstrumentationVerdictTests(unittest.TestCase):
             probe.verify_instrumentation("OK (1 test)\n", receipt="verified")
 
     def test_ui_receipts_must_not_be_inferred_from_ok_only(self):
-        for receipt in ("ui_prepared", "ui_verified"):
+        for receipt in ("ui_prepared", "ui_verified", "ui_recreated"):
             with self.subTest(receipt=receipt):
                 with self.assertRaisesRegex(RuntimeError, "phase evidence"):
                     probe.verify_instrumentation("OK (1 test)\n", receipt=receipt)
