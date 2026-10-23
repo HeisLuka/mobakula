@@ -31,3 +31,9 @@ or write access. No notes, histories, baselines or local files are changed.
 This draft does not permit S4 import or S5 upload. An independent
 desktop-produced MinIO fixture and a real Android Yandex bucket integration
 are still needed before declaring the transport accepted.
+
+**V1 provenance boundary:** canonical head/manifest/shard JSON includes VaultId,
+not the configured prefix. A different *valid* prefix cannot be rejected from
+these bytes alone. The native signer fixes the invitation prefix and signs
+exact typed S3 paths; the Kotlin transport fetches only those signed paths.
+Invalid/traversal prefixes still fail in S3Keyspace::new.

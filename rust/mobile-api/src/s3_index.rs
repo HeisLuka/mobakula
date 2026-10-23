@@ -1,5 +1,7 @@
 //! Read-only sharded S3 index proof using shared Akula Core V1 types.
 //! Does not authenticate a provider or grant File Gate authority.
+//! V1 bytes do not encode the source S3 prefix. Only the native signer and
+//! network path-scoping can prove where the signed object was read.
 
 use std::{collections::BTreeSet, str::FromStr};
 use aquilum_core::sync::{
@@ -149,9 +151,9 @@ mod tests {
     }
 
     #[test]
-    fn foreign_namespace_oversize_and_extra_manifest_data_are_rejected() {
+    fn invalid_namespace_oversize_and_extra_manifest_data_are_rejected() {
         let (v, h, m, s) = sample();
-        assert!(inspect_untrusted_sharded_index("akula-sync/foreign", &v,
+        assert!(inspect_untrusted_sharded_index("../invalid", &v,
             &h, &m, &[&s]).is_err());
         assert_eq!(inspect_untrusted_sharded_index("akula-sync/pair", &v,
             &h, &[m.as_slice(), b" "].concat(), &[&s]),
