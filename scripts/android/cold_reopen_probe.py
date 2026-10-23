@@ -17,6 +17,7 @@ TEST_APP = APP + ".test"
 RUNNER = TEST_APP + "/androidx.test.runner.AndroidJUnitRunner"
 CLASS = APP + ".ColdReopenTwoProcessTest"
 SMOKE_CLASS = APP + ".NativeNotesRoundTripTest#roundTrip_andNoInternetPermission"
+UI_CLASS = APP + ".UiNotesTwoProcessTest"
 
 
 def verify_instrumentation(output: str, *, receipt: str | None = None) -> None:
@@ -35,6 +36,8 @@ def main() -> int:
                         help="I consent to force-stopping the running test app")
     parser.add_argument("--include-smoke", action="store_true",
                         help="Also run JNI/Core smoke in the separate no-backup test vault")
+    parser.add_argument("--include-ui", action="store_true",
+                        help="Run real Compose UI cold-reopen proof on a disposable emulator only")
     args = parser.parse_args()
     if not args.ack_force_stop:
         parser.error("Pass --ack-force-stop; this interrupts the test app.")
@@ -75,6 +78,20 @@ def main() -> int:
         run("shell", "am", "force-stop", APP, timeout=30)
         stage("verify", "verifySavedFileFromGenuinelyNewAndroidProcess", "verified")
         print("PASS: previously saved bytes, BLAKE3 revision, list and stale-hash rejection survived a cold process restart")
+        if args.include_ui:
+            for phase, method, receipt in (
+                ("prepare", "prepareNoteThroughUi", "ui_prepared"),
+                ("verify", "reopenNoteThroughUi", "ui_verified"),
+            ):
+                run("shell", "am", "force-stop", APP, timeout=30)
+                output = run(
+                    "shell", "am", "instrument", "-w",
+                    "-e", "class", UI_CLASS + "#" + method,
+                    "-e", "akula_ui_phase", phase, RUNNER, timeout=300,
+                )
+                verify_instrumentation(output, receipt=receipt)
+                print(f"PASS: Compose UI {phase}", flush=True)
+            print("PASS: UI create, edit, save and reopen across Android processes", flush=True)
         return 0
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as cause:
         print(f"FAIL: {cause}", file=sys.stderr)

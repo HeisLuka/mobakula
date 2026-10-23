@@ -24,6 +24,16 @@ class InstrumentationVerdictTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "phase evidence"):
             probe.verify_instrumentation("OK (1 test)\n", receipt="verified")
 
+    def test_ui_receipts_must_not_be_inferred_from_ok_only(self):
+        for receipt in ("ui_prepared", "ui_verified"):
+            with self.subTest(receipt=receipt):
+                with self.assertRaisesRegex(RuntimeError, "phase evidence"):
+                    probe.verify_instrumentation("OK (1 test)\n", receipt=receipt)
+                probe.verify_instrumentation(
+                    f"INSTRUMENTATION_STATUS: akula_ui_check={receipt}\nOK (1 test)\n",
+                    receipt=receipt,
+                )
+
     def test_zero_or_multiple_tests_are_not_success(self):
         for output in ("OK (0 tests)\n", "OK (2 tests)\n", "No tests found\n"):
             with self.subTest(output=output):
