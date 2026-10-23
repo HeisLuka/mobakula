@@ -78,6 +78,23 @@ def main() -> int:
         return 0
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as cause:
         print(f"FAIL: {cause}", file=sys.stderr)
+        # Only the ephemeral emulator probe prints bounded crash diagnostics.
+        # In particular, `am instrument` can exit 0 even when its process dies.
+        if "Process crashed." in str(cause):
+            for command in (
+                ("logcat", "-b", "crash", "-d", "-t", "180", "-v", "threadtime"),
+                ("shell", "dumpsys", "activity", "exit-info", APP),
+            ):
+                try:
+                    result = subprocess.run(
+                        prefix + list(command), capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=25, check=False,
+                    )
+                    print("ANDROID CRASH DIAGNOSTIC [" + " ".join(command) + "]",
+                          file=sys.stderr)
+                    print((result.stdout + result.stderr)[-12000:], file=sys.stderr)
+                except (OSError, subprocess.TimeoutExpired) as diagnostic_error:
+                    print(f"Diagnostic unavailable: {diagnostic_error}", file=sys.stderr)
         return 1
 
 
