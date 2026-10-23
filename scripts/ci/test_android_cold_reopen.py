@@ -31,7 +31,7 @@ class InstrumentationVerdictTests(unittest.TestCase):
                     probe.verify_instrumentation("OK (1 test)\n", receipt=receipt)
                 probe.verify_instrumentation(
                     f"INSTRUMENTATION_STATUS: akula_ui_check={receipt}\nOK (1 test)\n",
-                    receipt=receipt,
+                    receipt=receipt, receipt_key="akula_ui_check",
                 )
 
     def test_zero_or_multiple_tests_are_not_success(self):

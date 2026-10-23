@@ -20,11 +20,12 @@ SMOKE_CLASS = APP + ".NativeNotesRoundTripTest#roundTrip_andNoInternetPermission
 UI_CLASS = APP + ".UiNotesTwoProcessTest"
 
 
-def verify_instrumentation(output: str, *, receipt: str | None = None) -> None:
+def verify_instrumentation(output: str, *, receipt: str | None = None,
+                           receipt_key: str = "akula_cold_check") -> None:
     """adb's am instrument may return 0 for failures or skipped test selectors."""
     if not re.search(r"(?m)^OK \(1 test\)\s*$", output):
         raise RuntimeError(f"Instrumentation did not pass exactly one test:\n{output[-3500:]}")
-    if receipt is not None and ("akula_cold_check=" + receipt) not in output:
+    if receipt is not None and (receipt_key + "=" + receipt) not in output:
         raise RuntimeError(f"Instrumentation missing {receipt} phase evidence:\n{output[-3500:]}")
 
 
@@ -89,7 +90,7 @@ def main() -> int:
                     "-e", "class", UI_CLASS + "#" + method,
                     "-e", "akula_ui_phase", phase, RUNNER, timeout=300,
                 )
-                verify_instrumentation(output, receipt=receipt)
+                verify_instrumentation(output, receipt=receipt, receipt_key="akula_ui_check")
                 print(f"PASS: Compose UI {phase}", flush=True)
             print("PASS: UI create, edit, save and reopen across Android processes", flush=True)
         return 0
