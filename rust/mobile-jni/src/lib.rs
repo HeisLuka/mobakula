@@ -1,6 +1,8 @@
 //! Versioned Rust/JNI command boundary. No Kotlin writer or raw path operation.
 use jni::JNIEnv;
-use jni::objects::{JObject, JString};
+use jni::objects::{JObject, JString, JByteArray, JCharArray};
+use mobakula_mobile_api::s3_invite::inspect_untrusted_s3_invite;
+use zeroize::Zeroizing;
 use jni::sys::jstring;
 use mobakula_mobile_api::notes::{NoteVault, NotesError};
 use serde::Deserialize;
@@ -97,6 +99,63 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_request(
     env.new_string(response).map_or(ptr::null_mut(), |value| value.into_raw())
 }
 
+/// Offline-only: encrypted byte[] and mutable char[] (never JSON credentials).
+fn invite_preview_response(encrypted: &[u8], password: &str) -> Value {
+    use mobakula_mobile_api::s3_invite::PairInviteError;
+    match inspect_untrusted_s3_invite(encrypted, password) {
+        Ok(p) => json!({"ok":true,"data":{
+            "provider":p.provider,"endpoint":p.endpoint,"region":p.region,
+            "bucket":p.bucket,"prefix":p.prefix,"cloudVaultId":p.cloud_vault_id,
+            "claimedGenesisFingerprint":p.claimed_genesis_fingerprint,
+            "trusted":false
+        }}),
+        Err(reason) => {
+            let code = match reason {
+                PairInviteError::TooLarge => "too_large",
+                PairInviteError::UnsupportedVersion => "unsupported_version",
+                PairInviteError::WeakPassword => "weak_password",
+                PairInviteError::InvalidScope => "invalid_scope",
+                _ => "invalid_invitation",
+            };
+            json!({"ok":false,"code":code,
+                "message":"Invitation authentication or validation failed"})
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_inspectS3Invitation(
+    mut env: JNIEnv, _receiver: JObject,
+    ciphertext: JByteArray, password: JCharArray,
+) -> jstring {
+    let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let length = env.get_array_length(&ciphertext)
+            .map_err(|_| "jni")? as usize;
+        let pass_len = env.get_array_length(&password)
+            .map_err(|_| "jni")? as usize;
+        if length > 16 * 1024 || pass_len > 1024 { return Err("too_large"); }
+        let mut signed = vec![0i8; length];
+        env.get_byte_array_region(&ciphertext, 0, &mut signed)
+            .map_err(|_| "jni")?;
+        let encrypted: Vec<u8> = signed.iter().map(|v| *v as u8).collect();
+        let mut utf16 = Zeroizing::new(vec![0u16; pass_len]);
+        env.get_char_array_region(&password, 0, &mut utf16)
+            .map_err(|_| "jni")?;
+        let pass = Zeroizing::new(String::from_utf16(&utf16)
+            .map_err(|_| "invalid_utf16")?);
+        Ok::<_, &'static str>(invite_preview_response(&encrypted, &pass))
+    }));
+    let data = match response {
+        Ok(Ok(value)) => value,
+        Ok(Err(code)) => json!({"ok":false,"code":code,
+            "message":"Invalid or oversized invitation input"}),
+        Err(_) => json!({"ok":false,"code":"panic",
+            "message":"Invite validation failed; no state was changed"}),
+    };
+    env.new_string(data.to_string())
+        .map_or(ptr::null_mut(), |v| v.into_raw())
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_apiVersion(
     _env: *mut c_void, _receiver: *mut c_void,
@@ -118,6 +177,15 @@ mod tests {
         let answer: Value = serde_json::from_str(&handle(r#"{"action":"not_supported"}"#)).unwrap();
         assert_eq!(answer["ok"], false);
         assert_eq!(answer["code"], "invalid_request");
+    }
+
+    #[test]
+    fn unsafe_invitation_reports_no_password_or_keys() {
+        let pass = "temporary-password-more-than-20-characters";
+        let body = invite_preview_response(b"wrong-version", pass);
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["code"], "invalid_invitation");
+        assert!(!body.to_string().contains(pass));
     }
 
     #[test]

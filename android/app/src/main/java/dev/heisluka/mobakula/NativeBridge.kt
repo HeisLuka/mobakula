@@ -10,4 +10,7 @@ internal object NativeBridge {
 
     /** JSON command; errors are encoded as JSON, not implicit success. */
     external fun request(payload: String): String
+
+    /** Offline-only .akula-sync V1 inspection. Never put the password in request(JSON). */
+    external fun inspectS3Invitation(encrypted: ByteArray, password: CharArray): String
 }
