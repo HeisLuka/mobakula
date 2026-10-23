@@ -152,9 +152,9 @@ internal object S3ReadOnlyProbe {
     }
 
     fun run(store: S3ProtectedInviteStore): Report {
-        val start = store.open().use { protected ->
+        val start = store.open().use { sealed ->
             json(NativeBridge.beginS3ReadProbe(
-                protected.encryptedInvitation, protected.password
+                sealed.encryptedInvitation, sealed.password
             ))
         }
         val session = start.getString("session")
