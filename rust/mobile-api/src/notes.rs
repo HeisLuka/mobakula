@@ -166,11 +166,6 @@ impl NoteVault {
         &self, reserved_local_id: Uuid, content: &str,
     ) -> Result<Note, NotesError> {
         Self::check_content(content)?;
-        // Already-validated LF-only remote bytes must not be normalized into
-        // different content without failing the source BLAKE3 check.
-        if content.as_bytes().contains(&b'\r') {
-            return Err(NotesError::new("invalid_content", "CRLF import refused"));
-        }
         let content = document::normalize_line_endings(content.to_owned());
         self.begin_write()?;
         let id = reserved_local_id.to_string();
