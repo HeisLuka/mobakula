@@ -243,7 +243,7 @@ internal object S3ReadOnlyProbe {
     }
 
     fun run(store: S3ProtectedInviteStore, checkpoints: S3CheckpointStore,
-            selectedDocument: String? = null): Report {
+            selectedCandidate: S3ManualImport.Candidate? = null): Report {
         val start = store.open().use { invitation ->
             json(NativeBridge.beginS3ReadProbe(
                 invitation.encryptedInvitation, invitation.password
@@ -433,14 +433,14 @@ internal object S3ReadOnlyProbe {
                             slots = S3LocalSlotProbe.inspect(session, first.bytes, possible)
                             bindingScan = S3BindingProbe.inspect(session, first.bytes, possible)
                             candidateRefs = S3ManualImport.parseCandidates(proofBlobs)
-                            if (selectedDocument != null) {
+                            if (selectedCandidate != null) {
                                 if (checkpoint.relation != "unchanged" ||
                                     checkpoint.expectedPrior == null ||
                                     !slots.checked || !bindingScan.available) {
                                     throw IOException("Закрепите и повторно проверьте источник S3")
                                 }
                                 importedNoteId = S3ManualImport.importSelected(
-                                    session, first.bytes, selectedDocument, candidateRefs, allowed, received
+                                    session, first.bytes, selectedCandidate, candidateRefs, allowed, received
                                 )
                             }
                         } finally {
@@ -451,7 +451,7 @@ internal object S3ReadOnlyProbe {
                     firstClear(revisionBytes)
                 }
             }
-            if (selectedDocument != null && importedNoteId == null) {
+            if (selectedCandidate != null && importedNoteId == null) {
                 throw IOException("Выбранный Markdown не прошёл полную проверку S3")
             }
             return Report(

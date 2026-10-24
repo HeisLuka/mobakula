@@ -54,10 +54,10 @@ internal object S3ManualImport {
 
     /** Called only after a *second* full read and explicit per-note consent. */
     internal fun importSelected(
-        session: String, pinnedHead: ByteArray, selectedDocumentId: String,
+        session: String, pinnedHead: ByteArray, selectedCandidate: Candidate,
         candidates: List<Candidate>, blobRefs: JSONArray, received: List<ByteArray>,
     ): String {
-        val selected = candidates.singleOrNull { it.documentId == selectedDocumentId }
+        val selected = candidates.singleOrNull { it == selectedCandidate }
             ?: throw IOException("Выбранная заметка отсутствует в проверенном S3")
         if (blobRefs.length() != received.size) {
             throw IOException("Содержимое S3 изменилось до импорта")

@@ -209,7 +209,7 @@ internal fun S3ReadOnlyProbeButton(
                             try {
                                 val result = withContext(Dispatchers.IO) {
                                     S3ReadOnlyProbe.run(
-                                        store, checkpoints, candidate.documentId
+                                        store, checkpoints, candidate
                                     )
                                 }
                                 report = result
