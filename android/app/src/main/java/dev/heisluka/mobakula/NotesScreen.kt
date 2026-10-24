@@ -477,7 +477,7 @@ private fun NotesFiles(
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
-            S3InvitePreviewCard()
+            S3InvitePreviewCard(onNoteImported = state::refresh)
         }
     }
 }

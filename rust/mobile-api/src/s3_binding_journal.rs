@@ -121,10 +121,14 @@ impl S3BindingJournal {
     /// Creates a private journal but NEVER creates a note.
     pub fn open(app_root: &Path) -> Result<Self, S3BindingError> {
         let path = database_path(app_root)?;
-        checked_db_file(&path)?;
+        let previously_created = checked_db_file(&path)?;
         let db = Connection::open_with_flags(&path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE)?;
         db.busy_timeout(Duration::from_secs(3))?;
+        if previously_created {
+            let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
+            if version != 1 { return Err(S3BindingError::Corrupt); }
+        }
         db.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=FULL;
@@ -168,10 +172,26 @@ impl S3BindingJournal {
         &mut self, scope: &str, document_id: DocumentId,
         revision_id: RevisionId, blob_blake3: &str,
     ) -> Result<S3Binding, S3BindingError> {
+        self.prepare_internal(scope, document_id, revision_id, blob_blake3, true)
+    }
+
+    /// Only a fresh intent is allowed to reach File Gate. Recovered PREPARED
+    /// (even with exactly matching bytes) is HOLD, never a silent retry.
+    pub(crate) fn prepare_fresh(
+        &mut self, scope: &str, document_id: DocumentId,
+        revision_id: RevisionId, blob_blake3: &str,
+    ) -> Result<S3Binding, S3BindingError> {
+        self.prepare_internal(scope, document_id, revision_id, blob_blake3, false)
+    }
+
+    fn prepare_internal(
+        &mut self, scope: &str, document_id: DocumentId,
+        revision_id: RevisionId, blob_blake3: &str, idempotent: bool,
+    ) -> Result<S3Binding, S3BindingError> {
         validate_key(scope, blob_blake3)?;
         let tx = self.db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(existing) = query_binding(&tx, scope, document_id)? {
-            return if existing.phase == S3BindingPhase::Prepared
+            return if idempotent && existing.phase == S3BindingPhase::Prepared
                 && existing.revision_id == revision_id
                 && existing.blob_blake3 == blob_blake3
             {
@@ -201,6 +221,34 @@ impl S3BindingJournal {
             revision_id, blob_blake3: blob_blake3.to_owned(),
             phase: S3BindingPhase::Prepared,
         })
+    }
+
+    /// The only durable confirmation path: caller must have just completed
+    /// File Gate create, HistoryService current-version check and disk readback.
+    /// DB UPDATE is conditional on the EXACT prepared identity and digest.
+    pub(crate) fn confirm_with_receipt(
+        &mut self, prepared: &S3Binding, observed_local_id: Uuid,
+        observed_blake3: &str,
+    ) -> Result<(), S3BindingError> {
+        validate_key(&prepared.source_scope, &prepared.blob_blake3)?;
+        if observed_local_id != prepared.local_note_id
+            || observed_blake3 != prepared.blob_blake3
+            || prepared.phase != S3BindingPhase::Prepared
+        {
+            return Err(S3BindingError::Conflict);
+        }
+        let tx = self.db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute(
+            "UPDATE receive_bindings SET phase='bound'
+             WHERE source_scope=?1 AND document_id=?2 AND local_note_id=?3
+               AND revision_id=?4 AND blob_blake3=?5 AND phase='prepared'",
+            params![prepared.source_scope, prepared.document_id.to_string(),
+                prepared.local_note_id.to_string(), prepared.revision_id.to_string(),
+                prepared.blob_blake3],
+        )?;
+        if changed != 1 { return Err(S3BindingError::Conflict); }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Uncertain/recovered states stay permanently on HOLD until a separate
@@ -275,6 +323,27 @@ mod tests {
         assert_eq!(db.status(&scope, doc).unwrap(), S3BindingLookup::Hold);
         assert!(matches!(db.prepare(&scope, doc, revision, &hash),
             Err(S3BindingError::Conflict)));
+    }
+
+    #[test]
+    fn fresh_receive_does_not_retry_an_interrupted_prepared_row() {
+        let dir = root();
+        let (scope, doc, revision, hash) = fixture();
+        let intent = {
+            let mut db = S3BindingJournal::open(dir.path()).unwrap();
+            let row = db.prepare_fresh(&scope, doc, revision, &hash).unwrap();
+            assert!(matches!(db.prepare_fresh(&scope, doc, revision, &hash),
+                Err(S3BindingError::Conflict)));
+            row
+        };
+        let mut db = S3BindingJournal::open(dir.path()).unwrap();
+        assert!(matches!(db.prepare_fresh(&scope, doc, revision, &hash),
+            Err(S3BindingError::Conflict)));
+        assert!(matches!(db.confirm_with_receipt(&intent, Uuid::new_v4(), &hash),
+            Err(S3BindingError::Conflict)));
+        assert_eq!(db.status(&scope, doc).unwrap(), S3BindingLookup::Prepared);
+        db.hold(&scope, doc).unwrap();
+        assert_eq!(db.status(&scope, doc).unwrap(), S3BindingLookup::Hold);
     }
 
     #[test]

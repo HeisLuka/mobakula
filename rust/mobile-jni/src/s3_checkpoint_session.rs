@@ -63,6 +63,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_checkS3Checkpoint
             let mut identity = [0_u8;32];
             identity.copy_from_slice(digest.as_ref());
             slot.checkpoint_head_sha256 = Some(identity);
+            slot.checkpoint_was_pinned = matches!(proof.relation, S3CheckpointRelation::Unchanged);
             let relation = match proof.relation {
                 S3CheckpointRelation::FirstObservation => "first",
                 S3CheckpointRelation::Unchanged => "unchanged",

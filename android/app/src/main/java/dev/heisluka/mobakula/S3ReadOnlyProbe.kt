@@ -50,6 +50,8 @@ internal object S3ReadOnlyProbe {
         val verifiedBlobBytes: Long = 0,
         val receiveCandidatesPreview: Int = 0,
         val receiveNeedsReviewPreview: Int = 0,
+        val manualImportCandidates: List<S3ManualImport.Candidate> = emptyList(),
+        val importedLocalNoteId: String? = null,
         val localSlotsChecked: Boolean = false,
         val localSlotsAbsent: Int = 0,
         val localSlotsIdenticalUnbound: Int = 0,
@@ -240,7 +242,8 @@ internal object S3ReadOnlyProbe {
         return id
     }
 
-    fun run(store: S3ProtectedInviteStore, checkpoints: S3CheckpointStore): Report {
+    fun run(store: S3ProtectedInviteStore, checkpoints: S3CheckpointStore,
+            selectedCandidate: S3ManualImport.Candidate? = null): Report {
         val start = store.open().use { invitation ->
             json(NativeBridge.beginS3ReadProbe(
                 invitation.encryptedInvitation, invitation.password
@@ -286,13 +289,10 @@ internal object S3ReadOnlyProbe {
                 proof.optBoolean("synced", true)) {
                 throw IOException("Недопустимый статус проверки S3")
             }
-            // Before reading any index, enforce continuity with the previous
-            // user-pinned local observation of this exact S3 namespace.
             val checkpoint = S3CheckpointProbe.inspect(
                 session, first.bytes, ancestors.toTypedArray(), checkpoints
             )
             // The latest manifest contains immutable, typed shard references.
-            // This is not a LIST or an import: only a bounded, checked index.
             val latest = JSONObject(String(ancestors.first(), Charsets.UTF_8))
             val refs = latest.getJSONArray("shards")
             if (refs.length() > MAX_PREVIEW_SHARDS) {
@@ -334,6 +334,8 @@ internal object S3ReadOnlyProbe {
             var blobsSupported = false
             var candidates = 0
             var needsReview = 0
+            var candidateRefs = emptyList<S3ManualImport.Candidate>()
+            var importedNoteId: String? = null
             var slots = S3LocalSlotProbe.Scan()
             var bindingScan = S3BindingProbe.Scan()
             if (supported) {
@@ -350,9 +352,7 @@ internal object S3ReadOnlyProbe {
                         if (!revisionIds.add(revisionId)) {
                             throw IOException("Дублирующаяся ревизия S3")
                         }
-                        // Native signer only accepts IDs from the same rooted,
-                        // already verified index, never arbitrary object keys.
-                        revisionBytes.add(readStableRevision(session, revisionId).bytes)
+                                revisionBytes.add(readStableRevision(session, revisionId).bytes)
                     }
                     val afterRevisions = readStable(session, "", MAX_ROOT)
                     if (first.meta != afterRevisions.meta ||
@@ -392,16 +392,12 @@ internal object S3ReadOnlyProbe {
                                 if (totalBlobBytes > MAX_BLOB_TOTAL) {
                                     throw IOException("S3 blob превышает бюджет")
                                 }
-                                // Native signer only accepts hashes derived
-                                // from verified revision metadata in this session.
-                                val blob = readStableBlob(session, hash)
+                                        val blob = readStableBlob(session, hash)
                                 if (blob.meta.size != length) {
                                     throw IOException("Размер S3 blob не совпадает с ревизией")
                                 }
                                 received.add(blob.bytes)
                             }
-                            // A complete root/ETag reread fences every blob,
-                            // not just the first manifest or revision.
                             val afterBlobs = readStable(session, "", MAX_ROOT)
                             if (first.meta != afterBlobs.meta ||
                                 !first.bytes.contentEquals(afterBlobs.bytes)) {
@@ -436,6 +432,17 @@ internal object S3ReadOnlyProbe {
                             needsReview = review
                             slots = S3LocalSlotProbe.inspect(session, first.bytes, possible)
                             bindingScan = S3BindingProbe.inspect(session, first.bytes, possible)
+                            candidateRefs = S3ManualImport.parseCandidates(proofBlobs)
+                            if (selectedCandidate != null) {
+                                if (checkpoint.relation != "unchanged" ||
+                                    checkpoint.expectedPrior == null ||
+                                    !slots.checked || !bindingScan.available) {
+                                    throw IOException("Закрепите и повторно проверьте источник S3")
+                                }
+                                importedNoteId = S3ManualImport.importSelected(
+                                    session, first.bytes, selectedCandidate, candidateRefs, allowed, received
+                                )
+                            }
                         } finally {
                             firstClear(received)
                         }
@@ -443,6 +450,9 @@ internal object S3ReadOnlyProbe {
                 } finally {
                     firstClear(revisionBytes)
                 }
+            }
+            if (selectedCandidate != null && importedNoteId == null) {
+                throw IOException("Выбранный Markdown не прошёл полную проверку S3")
             }
             return Report(
                 proof.getLong("generation"), proof.getInt("manifestsChecked"),
@@ -455,6 +465,8 @@ internal object S3ReadOnlyProbe {
                 verifiedBlobBytes = checkedBlobBytes,
                 receiveCandidatesPreview = candidates,
                 receiveNeedsReviewPreview = needsReview,
+                manualImportCandidates = candidateRefs,
+                importedLocalNoteId = importedNoteId,
                 localSlotsChecked = slots.checked,
                 localSlotsAbsent = slots.absent,
                 localSlotsIdenticalUnbound = slots.identicalButUnbound,

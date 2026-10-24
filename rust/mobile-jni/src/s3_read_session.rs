@@ -42,6 +42,7 @@ pub(super) struct Session {
     pub(super) signatures: usize,
     pub(super) ancestry_head_sha256: Option<[u8;32]>,
     pub(super) checkpoint_head_sha256: Option<[u8;32]>,
+    pub(super) checkpoint_was_pinned: bool,
     revision_index_head_sha256: Option<[u8;32]>,
     revision_refs: Vec<S3RevisionRefV1>,
     pub(super) blob_head_sha256: Option<[u8;32]>,
@@ -55,6 +56,7 @@ impl Session {
     /// index, revision, blob, or local-collision authorizations.
     pub(super) fn revoke_after_checkpoint_attempt(&mut self) {
         self.checkpoint_head_sha256 = None;
+        self.checkpoint_was_pinned = false;
         self.revision_index_head_sha256 = None;
         self.revision_refs.clear();
         self.blob_head_sha256 = None;
@@ -139,6 +141,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_beginS3ReadProbe(
             signatures: 0,
             ancestry_head_sha256: None,
             checkpoint_head_sha256: None,
+            checkpoint_was_pinned: false,
             revision_index_head_sha256: None,
             revision_refs: Vec::new(),
             blob_head_sha256: None,
@@ -218,6 +221,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3ReadProbe
             // A new ancestry attempt invalidates all earlier index authority.
             slot.ancestry_head_sha256 = None;
             slot.checkpoint_head_sha256 = None;
+            slot.checkpoint_was_pinned = false;
             slot.revision_index_head_sha256 = None;
             slot.revision_refs.clear();
             slot.blob_head_sha256 = None;

@@ -3,6 +3,9 @@ package dev.heisluka.mobakula
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -20,10 +23,13 @@ import kotlinx.coroutines.withContext
  * and matching genesis bytes are not permission to mutate local files.
  */
 @Composable
-internal fun S3ReadOnlyProbeButton(store: S3ProtectedInviteStore, enabled: Boolean) {
+internal fun S3ReadOnlyProbeButton(
+    store: S3ProtectedInviteStore, enabled: Boolean, onImported: () -> Unit,
+) {
     var working by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf<S3ReadOnlyProbe.Report?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
+    var selected by remember { mutableStateOf<S3ManualImport.Candidate?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current.applicationContext
     val checkpoints = remember(context) { S3CheckpointStore(context) }
@@ -155,6 +161,72 @@ internal fun S3ReadOnlyProbeButton(store: S3ProtectedInviteStore, enabled: Boole
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+        }
+        report?.takeIf {
+            it.checkpointRelation == "unchanged" && it.manualImportCandidates.isNotEmpty()
+        }?.let { verified ->
+            Text(
+                "Внешний источник S3 не удостоверен. Можно вручную принять только " +
+                    "отдельную Markdown-заметку без автоматической синхронизации.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            verified.manualImportCandidates.forEach { candidate ->
+                OutlinedButton(
+                    enabled = enabled && !working,
+                    onClick = { selected = candidate },
+                ) {
+                    Text("Импортировать Markdown: " + candidate.documentId.take(8))
+                }
+            }
+        }
+        report?.importedLocalNoteId?.let { localId ->
+            Text(
+                "Markdown импортирован как новая заметка: " + localId +
+                    ". S3-синхронизация не включена.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        selected?.let { candidate ->
+            AlertDialog(
+                onDismissRequest = { selected = null },
+                title = { Text("Подтвердить импорт Markdown") },
+                text = {
+                    Text(
+                        "S3 не подтверждает личность владельца сервера. " +
+                            "Akula заново проверит всю историю и байты, затем " +
+                            "создаст только одну новую заметку без перезаписи. " +
+                            "Это ручной импорт, не синхронизация. Документ: " +
+                            candidate.documentId
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        selected = null
+                        working = true
+                        report = null
+                        failure = null
+                        scope.launch {
+                            try {
+                                val result = withContext(Dispatchers.IO) {
+                                    S3ReadOnlyProbe.run(
+                                        store, checkpoints, candidate
+                                    )
+                                }
+                                report = result
+                                if (result.importedLocalNoteId != null) onImported()
+                            } catch (e: Exception) {
+                                failure = "Импорт отклонён: " +
+                                    (e.message ?: "проверьте источник и журнал")
+                            } finally {
+                                working = false
+                            }
+                        }
+                    }) { Text("Импортировать одну заметку") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { selected = null }) { Text("Отмена") }
+                },
+            )
         }
         failure?.let {
             Text(it, color = MaterialTheme.colorScheme.error,

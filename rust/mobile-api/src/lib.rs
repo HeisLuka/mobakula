@@ -51,3 +51,6 @@ pub mod s3_checkpoint;
 
 /// Durable source-scoped receive intents; no File Gate publish authority.
 pub mod s3_binding_journal;
+
+/// Explicit one-off source-verified File Gate create; no S3 sync authority.
+pub mod s3_manual_receive;
