@@ -91,9 +91,9 @@ fn row_to_binding(row: &rusqlite::Row<'_>) -> Result<S3Binding, rusqlite::Error>
     let phase: String = row.get(5)?;
     let parsed = (|| {
         if !valid_digest(&scope) || !valid_digest(&hash) { return None; }
-        let document_id = doc.parse().ok()?;
+        let document_id: DocumentId = doc.parse().ok()?;
         let local_note_id: Uuid = local.parse().ok()?;
-        let revision_id = rev.parse().ok()?;
+        let revision_id: RevisionId = rev.parse().ok()?;
         let phase = S3BindingPhase::parse(&phase).ok()?;
         if local_note_id.to_string() != local || document_id.to_string() != doc
             || revision_id.to_string() != rev { return None; }
