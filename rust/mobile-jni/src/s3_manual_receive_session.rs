@@ -7,7 +7,6 @@ use jni::sys::jstring;
 use mobakula_mobile_api::s3_manual_receive::{
     manually_import_one_checked_document, S3ManualReceiveError,
 };
-use aquilum_core::sync::DocumentId;
 use serde_json::json;
 use zeroize::Zeroizing;
 use crate::VAULT;
@@ -28,8 +27,8 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_importS3VerifiedM
     let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let token = jtext(&mut env, &session)?;
         let head = read_array(&env, &head, 4096)?;
-        let document = jtext(&mut env, &document)?
-            .parse::<DocumentId>().map_err(|_| "invalid_document_id")?;
+        let document = jtext(&mut env, &document)?;
+        if document.len() != 36 { return Err("invalid_document_id"); }
         let len = env.get_array_length(&payload).map_err(|_| "jni")? as usize;
         if len > MAX_IMPORT_BYTES { return Err("oversized_import"); }
         let mut signed = Zeroizing::new(vec![0i8; len]);
@@ -49,7 +48,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_importS3VerifiedM
                 return Err("requires_pinned_verified_root");
             }
             let candidate = slot.provisional_candidates.iter()
-                .find(|c| c.document_id == document)
+                .find(|c| c.document_id.to_string() == document)
                 .ok_or("document_not_in_verified_snapshot")?.clone();
             if candidate.bytes != raw.len()
                 || blake3::hash(&raw).to_hex().as_str() != candidate.blob_blake3
