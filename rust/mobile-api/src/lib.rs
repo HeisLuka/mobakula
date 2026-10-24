@@ -54,3 +54,7 @@ pub mod s3_binding_journal;
 
 /// Explicit one-off source-verified File Gate create; no S3 sync authority.
 pub mod s3_manual_receive;
+
+/// Offline shared desktop-Core V1 S3 graph through one Android File Gate receive.
+#[cfg(test)]
+mod s3_core_fixture_integration;
