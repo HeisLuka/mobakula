@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 JNI = ROOT / "rust/mobile-jni/src/s3_binding_session.rs"
 KOTLIN = ROOT / "android/app/src/main/java/dev/heisluka/mobakula/S3BindingProbe.kt"
 READ = ROOT / "android/app/src/main/java/dev/heisluka/mobakula/S3ReadOnlyProbe.kt"
-UI = ROOT / "android/app/src/main/java/dev/heisluka/mobakula/S3ReadOnlyProbeButton.kt"
+UI = ROOT / "android/app/src/main/java/dev/heisluka/mobakula/S3CandidateCards.kt"
 
 
 class S3DocumentStatesContract(unittest.TestCase):
@@ -30,6 +30,12 @@ class S3DocumentStatesContract(unittest.TestCase):
         self.assertIn('canOfferCandidate(candidate)', ui)
         self.assertIn('S3BindingProbe.State.UNMAPPED', ui)
         self.assertIn('Поиск по идентификатору', ui)
+        runner = (ROOT / "scripts/android/cold_reopen_probe.py").read_text("utf8")
+        device = (ROOT / "android/app/src/androidTest/java/dev/heisluka/mobakula/"
+                  "S3CandidateCardsUiTest.kt").read_text("utf8")
+        self.assertIn("S3CandidateCardsUiTest#newDocumentsOnlyCanBeImported", runner)
+        self.assertIn("fun newDocumentsOnlyCanBeImported()", device)
+
 
 
 if __name__ == "__main__":

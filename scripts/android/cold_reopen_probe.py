@@ -18,6 +18,7 @@ RUNNER = TEST_APP + "/androidx.test.runner.AndroidJUnitRunner"
 CLASS = APP + ".ColdReopenTwoProcessTest"
 SMOKE_CLASS = APP + ".NativeNotesRoundTripTest#roundTrip_andS3NetworkPermission"
 CLOUD_UI_CLASS = APP + ".S3CloudProviderUiTest#yandexTileOpensOverlayWithoutClaimingSynchronization"
+S3_CARDS_CLASS = APP + ".S3CandidateCardsUiTest#newDocumentsOnlyCanBeImported"
 UI_CLASS = APP + ".UiNotesTwoProcessTest"
 
 
@@ -86,6 +87,11 @@ def main() -> int:
                            "-e", "class", CLOUD_UI_CLASS, RUNNER, timeout=300)
             verify_instrumentation(cloud_ui)
             print("PASS: Compose S3 provider tile and Material 3 sheet", flush=True)
+            run("shell", "am", "force-stop", APP, timeout=30)
+            cards = run("shell", "am", "instrument", "-w",
+                        "-e", "class", S3_CARDS_CLASS, RUNNER, timeout=300)
+            verify_instrumentation(cards)
+            print("PASS: Compose S3 new/received cards and import suppression", flush=True)
             for phase, method, receipt in (
                 ("prepare", "prepareNoteThroughUi", "ui_prepared"),
                 ("verify", "reopenNoteThroughUi", "ui_verified"),

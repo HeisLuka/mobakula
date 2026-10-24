@@ -47,3 +47,19 @@ JVM tests exercise distinct statuses and count/identity consistency,
 including forged "synced" or unknown statuses. The existing Mobile
 gate compiles Kotlin/JNI on Android and Rust and runs an opt-in KVM
 UI smoke. Real Yandex data transfer remains independently pending.
+
+## Independent Android UI acceptance
+
+Candidate list rendering was extracted to S3CandidateCards, reducing the
+existing network/probe composable. S3CandidateCardsUiTest renders an exact
+synthetic two-document verified report (new vs already bound) without
+JNI, S3 credentials or cloud access and asserts:
+
+- Both statuses appear initially, but only the new document has an
+  import action.
+- Filtering New hides the bound document and still permits selecting
+  only the new DocumentId.
+- Filtering Received / Review hides all import actions.
+
+The opt-in Android KVM runtime run invokes this test separately from
+the Cloud provider navigation test and existing File Gate smoke.
