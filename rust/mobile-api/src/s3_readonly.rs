@@ -89,6 +89,26 @@ impl S3ReadSigner {
         &self.invite.prefix
     }
 
+    /// Non-secret, unambiguous binding of the specific cloud namespace and
+    /// pinned genesis. Credential rotation must not change this identity.
+    pub fn checkpoint_scope_fingerprint(&self) -> String {
+        let mut h = blake3::Hasher::new();
+        h.update(b"akula:mobile:s3-checkpoint-scope:v1");
+        for field in [
+            self.invite.provider.as_str(),
+            self.invite.endpoint.as_deref().unwrap_or(""),
+            self.invite.region.as_str(), self.invite.bucket.as_str(),
+            self.invite.prefix.as_str(), self.invite.genesis_fingerprint.as_str(),
+        ] {
+            h.update(&(field.len() as u32).to_le_bytes());
+            h.update(field.as_bytes());
+        }
+        let vault = self.invite.cloud_vault_id.to_string();
+        h.update(&(vault.len() as u32).to_le_bytes());
+        h.update(vault.as_bytes());
+        h.finalize().to_hex().to_string()
+    }
+
     pub fn current_head_key(&self) -> String {
         self.namespace.current_head_key()
     }
@@ -332,6 +352,20 @@ mod tests {
         }
         assert!(signer.sign(S3ReadObject::ImmutableBlob(hash),
             "PUT", "20261024T120001Z", None).is_err());
+    }
+
+    #[test]
+    fn checkpoint_scope_is_stable_across_key_rotation_not_bucket_change() {
+        let first = S3ReadSigner::from_authenticated_invitation(source()).unwrap();
+        let mut rotated = source();
+        rotated.access_key_id = "another-access-key".to_string();
+        rotated.secret_access_key = "another-secret-long-key".to_string();
+        let second = S3ReadSigner::from_authenticated_invitation(rotated).unwrap();
+        assert_eq!(first.checkpoint_scope_fingerprint(), second.checkpoint_scope_fingerprint());
+        let mut changed = source();
+        changed.bucket = "different-valid-bucket".to_owned();
+        let foreign = S3ReadSigner::from_authenticated_invitation(changed).unwrap();
+        assert_ne!(first.checkpoint_scope_fingerprint(), foreign.checkpoint_scope_fingerprint());
     }
 
     #[test]

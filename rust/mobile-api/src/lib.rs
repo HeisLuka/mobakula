@@ -45,3 +45,6 @@ pub mod s3_blobs;
 
 /// Untrusted, read-only additive receive candidates; no local File Gate writes.
 pub mod s3_receive_plan;
+
+/// Local, origin-scoped, read-only S3 ancestry checkpoint comparison.
+pub mod s3_checkpoint;
