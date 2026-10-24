@@ -8,8 +8,8 @@ installed Android integration test. This does not enable automatic sync.
 ## Scope and credentials
 
 - Use a dedicated, empty akula-e2e-* test bucket with two distinct
-  identities: a READ-ONLY Android invitation key and a PUBLISH-only key
-  for uploading the disposable fixture. Scope both to test objects.
+  identities: a READ-ONLY Android invitation key and a separate publisher key
+  restricted to conditional PUT plus GET/HEAD verification for the fixture. Scope both to test objects.
   Never reuse the publisher key in the Android invitation; do not use production data.
 - Only the akula-e2e/ prefix is permitted. Each run creates a new Core
   VaultId, so a failed or interrupted test never replaces an old fixture.
@@ -17,7 +17,7 @@ installed Android integration test. This does not enable automatic sync.
   AKULA_YANDEX_READ_ACCESS_KEY_ID, AKULA_YANDEX_READ_SECRET_ACCESS_KEY
   (Android invite, GET/HEAD only), and independent
   AKULA_YANDEX_PUBLISH_ACCESS_KEY_ID, AKULA_YANDEX_PUBLISH_SECRET_ACCESS_KEY
-  (fixture publisher, PUT only). Supply AKULA_YANDEX_INVITE_PASSWORD
+  (fixture publisher, PUT and readback). Supply AKULA_YANDEX_INVITE_PASSWORD
   (20+ bytes) and
   AKULA_YANDEX_FIXTURE_OUTPUT (fresh, absolute path). Optional
   AKULA_YANDEX_TEST_PREFIX defaults to akula-e2e/manual.
