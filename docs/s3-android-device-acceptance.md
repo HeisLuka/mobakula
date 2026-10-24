@@ -37,8 +37,10 @@ substitute for execution on a device.
 Normal pull-request Mobile gate tests Rust, both JNI ABIs, Kotlin JVM,
 APK and instrumentation *compilation*. It does not run an emulator.
 
-The opt-in workflow_dispatch input android_runtime=true enables the
+The opt-in workflow_dispatch input android_runtime=true, or an explicit
+android-runtime-acceptance label on a pull request, enables the
 hardware-accelerated emulator on a runner with readable/writable /dev/kvm.
+Normal unlabeled pull requests remain compile-only.
 The device runner executes:
 
   python3 scripts/android/cold_reopen_probe.py --ack-force-stop --include-smoke --include-ui --include-s3-guards

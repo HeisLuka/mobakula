@@ -61,6 +61,8 @@ class S3AndroidRuntimeContractTests(unittest.TestCase):
         self.assertIn("android_runtime:", ci)
         self.assertIn("default: false", ci)
         self.assertIn("--include-s3-guards", ci)
+        self.assertIn("android-runtime-acceptance", ci)
+        self.assertIn("PR_RUNTIME_OPT_IN", ci)
         self.assertIn("if: steps.runtime.outputs.run == 'true'", ci)
 
 
