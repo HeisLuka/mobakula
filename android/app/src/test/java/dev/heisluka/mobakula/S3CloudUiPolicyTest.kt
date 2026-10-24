@@ -18,7 +18,10 @@ class S3CloudUiPolicyTest {
         checkpointRelation = "unchanged",
         contentPreviewSupported = true,
         localSlotsChecked = true,
-        bindingScan = S3BindingProbe.Scan(available = true, unmapped = 1),
+        bindingScan = S3BindingProbe.Scan(
+            available = true, unmapped = 1,
+            states = mapOf(candidate.documentId to S3BindingProbe.State.UNMAPPED),
+        ),
         manualImportCandidates = listOf(candidate),
     )
 
@@ -38,6 +41,32 @@ class S3CloudUiPolicyTest {
             .canOfferManualImport())
         assertFalse(verified().copy(importedLocalNoteId =
             "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").canOfferManualImport())
+    }
+
+    @Test fun onlyUnmappedDocumentCanBeOfferedForImport() {
+        val previouslyReceived = candidate.copy(
+            documentId = "cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        )
+        val report = verified().copy(
+            manualImportCandidates = listOf(candidate, previouslyReceived),
+            bindingScan = S3BindingProbe.Scan(
+                available = true, journalExists = true, unmapped = 1, exact = 1,
+                states = mapOf(
+                    candidate.documentId to S3BindingProbe.State.UNMAPPED,
+                    previouslyReceived.documentId to S3BindingProbe.State.EXACT,
+                ),
+            ),
+        )
+        assertTrue(report.canOfferCandidate(candidate))
+        assertFalse(report.canOfferCandidate(previouslyReceived))
+        for (state in listOf(S3BindingProbe.State.OUTDATED,
+                S3BindingProbe.State.PREPARED, S3BindingProbe.State.HELD)) {
+            assertFalse(report.copy(bindingScan = report.bindingScan.copy(
+                states = report.bindingScan.states +
+                    (candidate.documentId to state))).canOfferCandidate(candidate))
+        }
+        assertEquals("Уже получена", S3BindingProbe.State.EXACT.displayStatus())
+        assertEquals("На проверке / HOLD", S3BindingProbe.State.HELD.displayStatus())
     }
 
     @Test fun pinIsOnlyOfferedForCompleteFirstOrAdvancedHistory() {

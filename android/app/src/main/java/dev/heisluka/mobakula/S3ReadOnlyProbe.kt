@@ -433,6 +433,9 @@ internal object S3ReadOnlyProbe {
                             slots = S3LocalSlotProbe.inspect(session, first.bytes, possible)
                             bindingScan = S3BindingProbe.inspect(session, first.bytes, possible)
                             candidateRefs = S3ManualImport.parseCandidates(proofBlobs)
+                            if (bindingScan.available && bindingScan.states.keys !=
+                                candidateRefs.map { it.documentId }.toSet()
+                            ) throw IOException("Недостоверные статусы S3 документов")
                             if (selectedCandidate != null) {
                                 if (checkpoint.relation != "unchanged" ||
                                     checkpoint.expectedPrior == null ||
