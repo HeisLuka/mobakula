@@ -150,7 +150,7 @@ jobs:
             # exit codes and evidence are not lost between shell invocations.
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-            python3 scripts/android/cold_reopen_probe.py --ack-force-stop --include-smoke --include-ui
+            python3 scripts/android/cold_reopen_probe.py --ack-force-stop --include-smoke --include-ui --include-s3-guards
       - name: Upload debug APK
         if: steps.scope.outputs.android == 'true'
         uses: actions/upload-artifact@v4

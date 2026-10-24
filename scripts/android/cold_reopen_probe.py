@@ -16,7 +16,10 @@ APP = "dev.heisluka.mobakula"
 TEST_APP = APP + ".test"
 RUNNER = TEST_APP + "/androidx.test.runner.AndroidJUnitRunner"
 CLASS = APP + ".ColdReopenTwoProcessTest"
-SMOKE_CLASS = APP + ".NativeNotesRoundTripTest#roundTrip_andNoInternetPermission"
+SMOKE_CLASS = APP + ".NativeNotesRoundTripTest#roundTrip_andS3NetworkPermission"
+S3_CHECKPOINT_CLASS = APP + ".S3CheckpointDeviceTest"
+S3_JNI_CLASS = APP + ".S3JniFailClosedDeviceTest"
+S3_INVITE_CLASS = APP + ".S3ProtectedInviteStoreTest"
 UI_CLASS = APP + ".UiNotesTwoProcessTest"
 
 
@@ -39,6 +42,8 @@ def main() -> int:
                         help="Also run JNI/Core smoke in the separate no-backup test vault")
     parser.add_argument("--include-ui", action="store_true",
                         help="Run real Compose UI cold-reopen proof on a disposable emulator only")
+    parser.add_argument("--include-s3-guards", action="store_true",
+                        help="Test Android Keystore checkpoint and no-session S3 JNI rejection")
     args = parser.parse_args()
     if not args.ack_force_stop:
         parser.error("Pass --ack-force-stop; this interrupts the test app.")
@@ -64,6 +69,34 @@ def main() -> int:
                         "-e", "class", SMOKE_CLASS, RUNNER, timeout=300)
             verify_instrumentation(smoke)
             print("PASS: Kotlin -> JNI -> Core File Gate smoke", flush=True)
+
+        if args.include_s3_guards:
+            for selector, receipt in (
+                (S3_CHECKPOINT_CLASS + "#persistsSealedCheckpointAndEnforcesCompareAndSet",
+                 "checkpoint_persisted_and_cas"),
+                (S3_CHECKPOINT_CLASS + "#tamperedCiphertextCannotBeReadOrMistakenForFirstObservation",
+                 "checkpoint_tamper_rejected"),
+                (S3_CHECKPOINT_CLASS + "#missingSealedFileWithExistingKeystoreKeyIsNotFreshEnrollment",
+                 "checkpoint_loss_rejected"),
+                (S3_JNI_CLASS + "#unverifiedSessionsCannotReadBindingsOrCreateNotes",
+                 "jni_guarded"),
+            ):
+                run("shell", "am", "force-stop", APP, timeout=30)
+                output = run("shell", "am", "instrument", "-w",
+                             "-e", "class", selector, RUNNER, timeout=300)
+                verify_instrumentation(
+                    output, receipt=receipt, receipt_key="akula_s3_check"
+                )
+                print(f"PASS: Android S3 runtime guard {receipt}", flush=True)
+            for method in ("keystoreEnvelopeSurvivesStoreRecreationWithNoPlaintextAtRest",
+                           "tamperedCiphertextIsRejectedWithoutReturningAnyFields"):
+                run("shell", "am", "force-stop", APP, timeout=30)
+                output = run(
+                    "shell", "am", "instrument", "-w", "-e", "class",
+                    S3_INVITE_CLASS + "#" + method, RUNNER, timeout=300,
+                )
+                verify_instrumentation(output)
+                print(f"PASS: S3 protected invitation {method}", flush=True)
 
         def stage(phase: str, test_method: str, receipt: str) -> None:
             output = run(
