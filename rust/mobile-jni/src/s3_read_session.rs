@@ -40,7 +40,8 @@ pub(super) struct Session {
     pub(super) signer: S3ReadSigner,
     expires_at: Instant,
     pub(super) signatures: usize,
-    ancestry_head_sha256: Option<[u8;32]>,
+    pub(super) ancestry_head_sha256: Option<[u8;32]>,
+    pub(super) checkpoint_head_sha256: Option<[u8;32]>,
     revision_index_head_sha256: Option<[u8;32]>,
     revision_refs: Vec<S3RevisionRefV1>,
     pub(super) blob_head_sha256: Option<[u8;32]>,
@@ -48,6 +49,20 @@ pub(super) struct Session {
     pub(super) receive_records: Vec<RevisionRecord>,
     pub(super) proven_blobs_head_sha256: Option<[u8;32]>,
     pub(super) provisional_candidates: Vec<S3ProvisionalCandidate>,
+}
+impl Session {
+    /// A failed/repeated checkpoint comparison cannot reuse earlier
+    /// index, revision, blob, or local-collision authorizations.
+    pub(super) fn revoke_after_checkpoint_attempt(&mut self) {
+        self.checkpoint_head_sha256 = None;
+        self.revision_index_head_sha256 = None;
+        self.revision_refs.clear();
+        self.blob_head_sha256 = None;
+        self.blob_expectations.clear();
+        self.receive_records.clear();
+        self.proven_blobs_head_sha256 = None;
+        self.provisional_candidates.clear();
+    }
 }
 static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
 
@@ -123,6 +138,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_beginS3ReadProbe(
             id, signer, expires_at: Instant::now() + SESSION_TTL,
             signatures: 0,
             ancestry_head_sha256: None,
+            checkpoint_head_sha256: None,
             revision_index_head_sha256: None,
             revision_refs: Vec::new(),
             blob_head_sha256: None,
@@ -201,6 +217,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3ReadProbe
         with_session(&id, |slot| {
             // A new ancestry attempt invalidates all earlier index authority.
             slot.ancestry_head_sha256 = None;
+            slot.checkpoint_head_sha256 = None;
             slot.revision_index_head_sha256 = None;
             slot.revision_refs.clear();
             slot.blob_head_sha256 = None;
@@ -267,10 +284,14 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3IndexProb
             session.proven_blobs_head_sha256 = None;
             session.provisional_candidates.clear();
             let digest = ring::digest::digest(&ring::digest::SHA256, &head);
+            // No remote index or later blob access until S4d2a has checked
+            // the existing local anchor against this exact verified root.
             if session.ancestry_head_sha256.as_ref().map(|x| x.as_slice())
                 != Some(digest.as_ref())
+                || session.checkpoint_head_sha256.as_ref().map(|x| x.as_slice())
+                    != Some(digest.as_ref())
             {
-                return Err("unverified_head");
+                return Err("unchecked_local_checkpoint");
             }
             let slices: Vec<&[u8]> = payload.iter().map(Vec::as_slice).collect();
             let index = inspect_untrusted_sharded_index(

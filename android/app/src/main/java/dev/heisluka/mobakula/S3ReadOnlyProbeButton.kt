@@ -9,6 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -24,6 +25,8 @@ internal fun S3ReadOnlyProbeButton(store: S3ProtectedInviteStore, enabled: Boole
     var report by remember { mutableStateOf<S3ReadOnlyProbe.Report?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current.applicationContext
+    val checkpoints = remember(context) { S3CheckpointStore(context) }
     Column(modifier = Modifier.fillMaxWidth()) {
         Button(enabled = enabled && !working, onClick = {
             working = true
@@ -32,8 +35,11 @@ internal fun S3ReadOnlyProbeButton(store: S3ProtectedInviteStore, enabled: Boole
             scope.launch {
                 try {
                     report = withContext(Dispatchers.IO) {
-                        S3ReadOnlyProbe.run(store)
+                        S3ReadOnlyProbe.run(store, checkpoints)
                     }
+                } catch (_: S3CheckpointProbe.CheckpointMismatch) {
+                    failure = "S3 вернул старую либо расходящуюся историю. " +
+                        "Контрольная точка защищена: импорт заблокирован."
                 } catch (_: Exception) {
                     failure = "S3 проверка чтения не пройдена. " +
                         "Проверьте ключи, сеть, удалённую историю и время устройства."
@@ -91,6 +97,46 @@ internal fun S3ReadOnlyProbeButton(store: S3ProtectedInviteStore, enabled: Boole
                     "локальная привязка ещё не подтверждены.",
                 style = MaterialTheme.typography.bodySmall,
             )
+        }
+        report?.let { result ->
+            Text(
+                when (result.checkpointRelation) {
+                    "first" -> "На устройстве нет закреплённой истории S3."
+                    "unchanged" -> "Локальная контрольная точка S3 совпадает."
+                    "advanced" -> "Новая история содержит закреплённую контрольную точку."
+                    else -> "История S3 пока не закреплена."
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+            val proposal = result.checkpointProposal
+            if (proposal != null && result.checkpointRelation != "unchanged") {
+                Button(enabled = enabled && !working, onClick = {
+                    working = true
+                    failure = null
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                checkpoints.pinVerified(proposal.candidate, proposal.expectedPrior)
+                            }
+                            report = result.copy(
+                                checkpointRelation = "unchanged",
+                                checkpointProposal = null,
+                            )
+                        } catch (_: Exception) {
+                            failure = "Не удалось закрепить S3 checkpoint. " +
+                                "Повторите проверку без изменения файлов."
+                        } finally {
+                            working = false
+                        }
+                    }
+                }) { Text("Закрепить проверенное состояние S3") }
+                Text(
+                    "Закрепление защищает от обнаруживаемого отката удалённой " +
+                        "истории на этом устройстве, но не подтверждает владельца " +
+                        "S3 и не разрешает запись заметок.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
         failure?.let {
             Text(it, color = MaterialTheme.colorScheme.error,

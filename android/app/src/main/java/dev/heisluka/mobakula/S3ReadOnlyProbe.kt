@@ -55,6 +55,8 @@ internal object S3ReadOnlyProbe {
         val localSlotsIdenticalUnbound: Int = 0,
         val localSlotsConflicting: Int = 0,
         val localSlotsUnsafe: Int = 0,
+        val checkpointRelation: String = "unchecked",
+        val checkpointProposal: S3CheckpointProbe.Assessment? = null,
     )
     internal data class Meta(val etag: String, val size: Long)
     internal data class ObjectBytes(val meta: Meta, val bytes: ByteArray)
@@ -237,7 +239,7 @@ internal object S3ReadOnlyProbe {
         return id
     }
 
-    fun run(store: S3ProtectedInviteStore): Report {
+    fun run(store: S3ProtectedInviteStore, checkpoints: S3CheckpointStore): Report {
         val start = store.open().use { invitation ->
             json(NativeBridge.beginS3ReadProbe(
                 invitation.encryptedInvitation, invitation.password
@@ -283,6 +285,11 @@ internal object S3ReadOnlyProbe {
                 proof.optBoolean("synced", true)) {
                 throw IOException("Недопустимый статус проверки S3")
             }
+            // Before reading any index, enforce continuity with the previous
+            // user-pinned local observation of this exact S3 namespace.
+            val checkpoint = S3CheckpointProbe.inspect(
+                session, first.bytes, ancestors.toTypedArray(), checkpoints
+            )
             // The latest manifest contains immutable, typed shard references.
             // This is not a LIST or an import: only a bounded, checked index.
             val latest = JSONObject(String(ancestors.first(), Charsets.UTF_8))
@@ -450,6 +457,8 @@ internal object S3ReadOnlyProbe {
                 localSlotsIdenticalUnbound = slots.identicalButUnbound,
                 localSlotsConflicting = slots.conflicting,
                 localSlotsUnsafe = slots.unsafe,
+                checkpointRelation = checkpoint.relation,
+                checkpointProposal = if (blobsSupported) checkpoint else null,
             )
         } finally {
             // Credentials are dropped in native memory even on timeout or UI
