@@ -136,7 +136,12 @@ internal fun S3InvitePreviewCard(
         ) {
             S3InviteSettings(
                 onNoteImported = onNoteImported,
-                onOpenNotes = onOpenNotes,
+                onOpenNotes = {
+                    if (!sheetBusy.value) {
+                        opened = false
+                        onOpenNotes()
+                    }
+                },
                 onConfigured = { configured = it },
                 onBusyChanged = { sheetBusy.value = it },
             )

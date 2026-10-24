@@ -1,6 +1,7 @@
 package dev.heisluka.mobakula
 
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -19,7 +20,12 @@ class S3CloudProviderUiTest {
 
     @Test
     fun yandexTileOpensOverlayWithoutClaimingSynchronization() {
-        compose.onNodeWithText("Файлы").performClick()
+        // Cloud is its own tab. Local import/export must not invoke S3.
+        compose.onNodeWithTag("tab_files").performClick()
+        assertTrue(compose.onAllNodesWithTag("cloud_yandex_tile")
+            .fetchSemanticsNodes().isEmpty())
+        compose.onNodeWithTag("tab_cloud").performClick()
+        compose.onNodeWithTag("cloud_sources_screen").assertExists()
         compose.onNodeWithTag("cloud_yandex_tile")
             .performScrollTo().assertExists().performClick()
         compose.onNodeWithTag("cloud_s3_sheet").assertExists()
