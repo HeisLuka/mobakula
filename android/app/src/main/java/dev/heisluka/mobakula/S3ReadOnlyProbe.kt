@@ -55,6 +55,7 @@ internal object S3ReadOnlyProbe {
         val localSlotsIdenticalUnbound: Int = 0,
         val localSlotsConflicting: Int = 0,
         val localSlotsUnsafe: Int = 0,
+        val bindingScan: S3BindingProbe.Scan = S3BindingProbe.Scan(),
         val checkpointRelation: String = "unchecked",
         val checkpointProposal: S3CheckpointProbe.Assessment? = null,
     )
@@ -334,6 +335,7 @@ internal object S3ReadOnlyProbe {
             var candidates = 0
             var needsReview = 0
             var slots = S3LocalSlotProbe.Scan()
+            var bindingScan = S3BindingProbe.Scan()
             if (supported) {
                 val refs = index.getJSONArray("revisionIds")
                 if (refs.length() != index.getInt("revisions") ||
@@ -433,6 +435,7 @@ internal object S3ReadOnlyProbe {
                             candidates = possible
                             needsReview = review
                             slots = S3LocalSlotProbe.inspect(session, first.bytes, possible)
+                            bindingScan = S3BindingProbe.inspect(session, first.bytes, possible)
                         } finally {
                             firstClear(received)
                         }
@@ -457,6 +460,7 @@ internal object S3ReadOnlyProbe {
                 localSlotsIdenticalUnbound = slots.identicalButUnbound,
                 localSlotsConflicting = slots.conflicting,
                 localSlotsUnsafe = slots.unsafe,
+                bindingScan = bindingScan,
                 checkpointRelation = checkpoint.relation,
                 checkpointProposal = if (blobsSupported) checkpoint else null,
             )

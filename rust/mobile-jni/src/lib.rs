@@ -16,6 +16,7 @@ mod s3_read_session;
 mod s3_blob_session;
 mod s3_local_session;
 mod s3_checkpoint_session;
+mod s3_binding_session;
 
 static VAULT: OnceLock<Mutex<Option<NoteVault>>> = OnceLock::new();
 

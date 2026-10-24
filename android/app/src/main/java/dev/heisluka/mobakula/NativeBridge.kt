@@ -34,5 +34,6 @@ internal object NativeBridge {
     external fun inspectS3LocalSlots(session: String, head: ByteArray): String
     external fun checkS3CheckpointProbe(session: String, head: ByteArray,
                                         manifests: Array<ByteArray>, prior: ByteArray): String
+    external fun inspectS3BindingJournalProbe(session: String, head: ByteArray): String
     external fun endS3ReadProbe(session: String): String
 }
