@@ -34,6 +34,10 @@ class S3DocumentStatesContract(unittest.TestCase):
         device = (ROOT / "android/app/src/androidTest/java/dev/heisluka/mobakula/"
                   "S3CandidateCardsUiTest.kt").read_text("utf8")
         self.assertIn("S3CandidateCardsUiTest#newDocumentsOnlyCanBeImported", runner)
+        gradle = (ROOT / "android/app/build.gradle.kts").read_text("utf8")
+        self.assertIn('debugImplementation("androidx.compose.ui:ui-test-manifest")',
+                      gradle)
+
         self.assertIn("fun newDocumentsOnlyCanBeImported()", device)
 
 

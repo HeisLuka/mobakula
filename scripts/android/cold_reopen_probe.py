@@ -26,7 +26,15 @@ def verify_instrumentation(output: str, *, receipt: str | None = None,
                            receipt_key: str = "akula_cold_check") -> None:
     """adb's am instrument may return 0 for failures or skipped test selectors."""
     if not re.search(r"(?m)^OK \(1 test\)\s*$", output):
-        raise RuntimeError(f"Instrumentation did not pass exactly one test:\n{output[-3500:]}")
+        # Android's instrumentation often places the assertion at the START
+        # of the output, while the tail only contains coroutine stack frames.
+        # These smoke tests contain synthetic notes and no real S3 credentials.
+        excerpt = output[:3800]
+        if len(output) > 5300:
+            excerpt += "\n--- middle omitted ---\n" + output[-1500:]
+        else:
+            excerpt = output
+        raise RuntimeError("Instrumentation did not pass exactly one test:\n" + excerpt)
     if receipt is not None and (receipt_key + "=" + receipt) not in output:
         raise RuntimeError(f"Instrumentation missing {receipt} phase evidence:\n{output[-3500:]}")
 
