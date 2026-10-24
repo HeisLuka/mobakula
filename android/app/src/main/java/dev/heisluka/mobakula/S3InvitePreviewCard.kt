@@ -63,7 +63,9 @@ private fun readBoundedInvitation(context: Context, uri: Uri): ByteArray {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
+internal fun S3InvitePreviewCard(
+    onNoteImported: () -> Unit, onOpenNotes: () -> Unit,
+) {
     val context = LocalContext.current.applicationContext
     var opened by rememberSaveable { mutableStateOf(false) }
     var configured by remember(context) {
@@ -134,6 +136,7 @@ internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
         ) {
             S3InviteSettings(
                 onNoteImported = onNoteImported,
+                onOpenNotes = onOpenNotes,
                 onConfigured = { configured = it },
                 onBusyChanged = { sheetBusy.value = it },
             )
@@ -146,6 +149,7 @@ internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
 @Composable
 private fun S3InviteSettings(
     onNoteImported: () -> Unit,
+    onOpenNotes: () -> Unit,
     onConfigured: (Boolean) -> Unit,
     onBusyChanged: (Boolean) -> Unit,
 ) {
@@ -367,6 +371,7 @@ private fun S3InviteSettings(
             S3ReadOnlyProbeButton(
                 store, enabled = !busy && preview != null,
                 onImported = onNoteImported,
+                onOpenNotes = onOpenNotes,
                 onWorkingChanged = { readBusy = it },
             )
         }
