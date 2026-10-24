@@ -4,12 +4,21 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -48,9 +57,98 @@ private fun readBoundedInvitation(context: Context, uri: Uri): ByteArray {
     }
 }
 
-/** Protected offline import only; never asserts remote owner trust or file Sync. */
+/**
+ * The cloud landing tile is deliberately neutral: a saved local credential
+ * is NOT an S3 connection and never earns a green "synchronized" indicator.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
+    val context = LocalContext.current.applicationContext
+    var opened by rememberSaveable { mutableStateOf(false) }
+    var configured by remember(context) {
+        mutableStateOf(S3ProtectedInviteStore(context).exists())
+    }
+    val sheetBusy = remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Облачные источники",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold)
+        Text("Провайдеры открываются отдельно. Ваши локальные заметки " +
+            "не отправляются в облако.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("cloud_yandex_tile")
+            .clickable { opened = true },
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Row(
+            Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+            ) {
+                Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                    Text("S3", color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold)
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("Yandex Object Storage", fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleMedium, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis)
+                Text("Ручной импорт Markdown · только чтение",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall)
+                Text(
+                    if (configured) "Профиль хранится на устройстве"
+                    else "Настроить через .akula-sync",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            Text("›", color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.headlineMedium)
+        }
+    }
+    if (opened) {
+        val sheet = rememberModalBottomSheetState(
+            skipPartiallyExpanded = true,
+            confirmValueChange = { it != SheetValue.Hidden || !sheetBusy.value },
+        )
+        ModalBottomSheet(
+            onDismissRequest = { if (!sheetBusy.value) opened = false },
+            sheetState = sheet,
+            modifier = Modifier.testTag("cloud_s3_sheet"),
+        ) {
+            S3InviteSettings(
+                onNoteImported = onNoteImported,
+                onConfigured = { configured = it },
+                onBusyChanged = { sheetBusy.value = it },
+            )
+        }
+    }
+    }
+}
+
+/** Protected offline setup. The sheet is never a remote sync admission. */
+@Composable
+private fun S3InviteSettings(
+    onNoteImported: () -> Unit,
+    onConfigured: (Boolean) -> Unit,
+    onBusyChanged: (Boolean) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val store = remember(context) { S3ProtectedInviteStore(context.applicationContext) }
@@ -62,6 +160,13 @@ internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
     var saved by remember { mutableStateOf(store.exists()) }
     var busy by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var readBusy by remember { mutableStateOf(false) }
+    LaunchedEffect(busy, readBusy) { onBusyChanged(busy || readBusy) }
+
+    // The private file content is not retained after closing the provider sheet.
+    DisposableEffect(Unit) {
+        onDispose { envelope?.fill(0) }
+    }
 
     /** Opens a sealed invitation on a worker and never publishes credentials. */
     LaunchedEffect(store) {
@@ -84,6 +189,7 @@ internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
                 failure = "Невозможно открыть защищённый профиль. Удалите и импортируйте заново."
             } finally {
                 saved = store.exists()
+                onConfigured(saved)
                 busy = false
             }
         }
@@ -128,6 +234,7 @@ internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
                         try {
                             withContext(Dispatchers.IO) { store.delete() }
                             saved = false
+                            onConfigured(false)
                             preview = null
                             password = ""
                             envelope?.fill(0)
@@ -146,18 +253,45 @@ internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
         )
     }
 
-    Surface(shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant) {
-        Column(Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("S3 — настройки облака", style = MaterialTheme.typography.titleMedium)
-            Text("Импорт .akula-sync с ПК. Данные сохраняются под ключом Android Keystore. " +
-                "Подключение и синхронизация пока выключены.",
-                style = MaterialTheme.typography.bodySmall)
+    Column(
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp).padding(bottom = 32.dp).testTag("cloud_s3_content"),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text("Облачный источник", style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary)
+        Text("Yandex Object Storage",
+            style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Получайте отдельные Markdown-заметки. Akula проверит данные " +
+            "перед созданием локальной копии. Автоматической синхронизации нет.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+        ) {
+            Column(Modifier.fillMaxWidth().padding(15.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text(if (saved) "01  Защищённый профиль" else "01  Добавить профиль",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (saved) "Конфигурация зашифрована Android Keystore. " +
+                        "Это не означает успешного подключения к серверу."
+                    else "Выберите приглашение .akula-sync, созданное на ПК, " +
+                        "и введите его пароль. Удалённые данные пока не читаются.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             if (!saved) {
                 OutlinedButton(enabled = !busy, onClick = {
                     picker.launch(arrayOf("*/*"))
-                }) { Text("Выбрать .akula-sync") }
+                }) { Text("Выбрать файл .akula-sync") }
+                if (envelope != null) {
+                    Text("Приглашение выбрано · " + envelope!!.size + " байт",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary)
+                }
                 if (envelope != null) {
                     OutlinedTextField(
                         value = password,
@@ -190,7 +324,8 @@ internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
                                 if (result.optBoolean("ok")) {
                                     preview = result.getJSONObject("data")
                                     saved = true
-                                    notice = "Настройки защищены. Соединение S3 ещё не проверено."
+                                    onConfigured(true)
+                                    notice = "Профиль сохранён. Для чтения S3 запустите проверку."
                                     envelope?.fill(0)
                                     envelope = null
                                 } else {
@@ -200,6 +335,7 @@ internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
                             } catch (_: Exception) {
                                 failure = "Не удалось защитить настройки. Импорт не завершён."
                                 saved = store.exists()
+                                onConfigured(saved)
                             } finally {
                                 temporary.fill('\u0000')
                                 busy = false
@@ -208,29 +344,60 @@ internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
                     }) { Text("Проверить и сохранить") }
                 }
             } else {
-                S3ReadOnlyProbeButton(
-                    store, enabled = !busy && preview != null,
-                    onImported = onNoteImported,
-                )
-                Text("Конфигурация сохранена локально. Для замены сначала удалите её.",
+                Text("Проверка содержимого доступна ниже.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall)
-                OutlinedButton(enabled = !busy, onClick = { confirmDelete = true }) {
-                    Text("Удалить локальный S3-профиль")
+            }
+            }
+        }
+        if (busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        failure?.let { text ->
+            Surface(shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.errorContainer) {
+                Text(text, Modifier.fillMaxWidth().padding(12.dp),
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        notice?.let { text ->
+            Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall)
+        }
+        if (saved) {
+            S3ReadOnlyProbeButton(
+                store, enabled = !busy && preview != null,
+                onImported = onNoteImported,
+                onWorkingChanged = { readBusy = it },
+            )
+        }
+        preview?.let { p ->
+            var details by remember { mutableStateOf(false) }
+            OutlinedButton(onClick = { details = !details }) {
+                Text(if (details) "Скрыть параметры источника" else "Параметры источника")
+            }
+            if (details) {
+                Surface(shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Данные из приглашения, не подтверждённые сервером",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Бакет: " + p.optString("bucket"))
+                        Text("Префикс: " + p.optString("prefix"))
+                        Text("Cloud VaultId: " + p.optString("cloudVaultId"),
+                            style = MaterialTheme.typography.bodySmall)
+                        Text("Genesis: " + p.optString("claimedGenesisFingerprint"),
+                            style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
-            if (busy) CircularProgressIndicator(Modifier.size(22.dp))
-            failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            notice?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-            preview?.let { p ->
-                Text("Параметры из приглашения (НЕ подтверждены сервером):",
-                    style = MaterialTheme.typography.bodySmall)
-                Text("Провайдер: " + p.optString("provider"))
-                Text("Бакет: " + p.optString("bucket"))
-                Text("Префикс: " + p.optString("prefix"))
-                Text("Cloud VaultId: " + p.optString("cloudVaultId"))
-                Text("Заявленный отпечаток: " +
-                    p.optString("claimedGenesisFingerprint"),
-                    style = MaterialTheme.typography.bodySmall)
+        }
+        if (saved) {
+            HorizontalDivider()
+            TextButton(enabled = !busy, onClick = { confirmDelete = true }) {
+                Text("Удалить локальный S3-профиль",
+                    color = MaterialTheme.colorScheme.error)
             }
         }
     }

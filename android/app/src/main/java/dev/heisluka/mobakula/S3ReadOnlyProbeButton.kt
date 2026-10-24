@@ -25,6 +25,7 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun S3ReadOnlyProbeButton(
     store: S3ProtectedInviteStore, enabled: Boolean, onImported: () -> Unit,
+    onWorkingChanged: (Boolean) -> Unit = {},
 ) {
     var working by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf<S3ReadOnlyProbe.Report?>(null) }
@@ -36,6 +37,7 @@ internal fun S3ReadOnlyProbeButton(
     Column(modifier = Modifier.fillMaxWidth()) {
         Button(enabled = enabled && !working, onClick = {
             working = true
+            onWorkingChanged(true)
             report = null
             failure = null
             scope.launch {
@@ -51,6 +53,7 @@ internal fun S3ReadOnlyProbeButton(
                         "Проверьте ключи, сеть, удалённую историю и время устройства."
                 } finally {
                     working = false
+                    onWorkingChanged(false)
                 }
             }
         }) {
@@ -136,6 +139,7 @@ internal fun S3ReadOnlyProbeButton(
             if (proposal != null && result.checkpointRelation != "unchanged") {
                 Button(enabled = enabled && !working, onClick = {
                     working = true
+                    onWorkingChanged(true)
                     failure = null
                     scope.launch {
                         try {
@@ -151,6 +155,7 @@ internal fun S3ReadOnlyProbeButton(
                                 "Повторите проверку без изменения файлов."
                         } finally {
                             working = false
+                            onWorkingChanged(false)
                         }
                     }
                 }) { Text("Закрепить проверенное состояние S3") }
@@ -203,6 +208,7 @@ internal fun S3ReadOnlyProbeButton(
                     TextButton(onClick = {
                         selected = null
                         working = true
+                        onWorkingChanged(true)
                         report = null
                         failure = null
                         scope.launch {
@@ -219,6 +225,7 @@ internal fun S3ReadOnlyProbeButton(
                                     (e.message ?: "проверьте источник и журнал")
                             } finally {
                                 working = false
+                                onWorkingChanged(false)
                             }
                         }
                     }) { Text("Импортировать одну заметку") }
