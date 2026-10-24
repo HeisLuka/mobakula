@@ -45,30 +45,45 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_inspectS3BindingJ
             let mut prepared = 0_usize;
             let mut held = 0_usize;
             let mut unmapped = 0_usize;
+            let mut states = Vec::with_capacity(slot.provisional_candidates.len());
             for candidate in &slot.provisional_candidates {
                 let binding = journal.as_ref()
                     .map(|db| db.lookup(&scope, candidate.document_id))
                     .transpose().map_err(|_| "binding_lookup_error")?
                     .flatten();
-                match binding {
-                    None => unmapped += 1,
-                    Some(binding) if binding.phase == S3BindingPhase::Hold => held += 1,
+                let state = match binding {
+                    None => { unmapped += 1; "unmapped" },
+                    Some(binding) if binding.phase == S3BindingPhase::Hold => {
+                        held += 1; "held"
+                    },
                     Some(binding) if binding.phase == S3BindingPhase::Prepared
                         && binding.revision_id == candidate.revision_id
-                        && binding.blob_blake3 == candidate.blob_blake3 => prepared += 1,
+                        && binding.blob_blake3 == candidate.blob_blake3 => {
+                        prepared += 1; "prepared"
+                    },
                     Some(binding) if binding.phase == S3BindingPhase::Bound
                         && binding.revision_id == candidate.revision_id
                         && binding.blob_blake3 == candidate.blob_blake3 => {
-                        // Durable mapping alone is not a claim that the
-                        // locally editable file still contains imported bytes.
+                        // Even a durable binding is NOT a verified current
+                        // local file: check its bytes before claiming exact.
                         match vault.read(&binding.local_note_id.to_string()) {
-                            Ok(local) if local.hash == candidate.blob_blake3 => exact += 1,
-                            _ => held += 1,
+                            Ok(local) if local.hash == candidate.blob_blake3 => {
+                                exact += 1; "exact"
+                            },
+                            _ => { held += 1; "held" },
                         }
                     },
-                    Some(binding) if binding.phase == S3BindingPhase::Bound => outdated += 1,
-                    Some(_) => held += 1,
-                }
+                    Some(binding) if binding.phase == S3BindingPhase::Bound => {
+                        outdated += 1; "outdated"
+                    },
+                    Some(_) => { held += 1; "held" },
+                };
+                // Typed identities are already proven by immutable S3 Core.
+                // Never expose local_note_id, file paths or credentials.
+                states.push(json!({
+                    "documentId": candidate.document_id.to_string(),
+                    "state": state,
+                }));
             }
             Ok(json!({"ok":true,"data":{
                 "bindingScanAvailable":true,
@@ -76,6 +91,7 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_inspectS3BindingJ
                 "scannedDocuments":slot.provisional_candidates.len(),
                 "exactBindings":exact,"outdatedBindings":outdated,
                 "preparedIntents":prepared,"onHold":held,"unmapped":unmapped,
+                "documentStates":states,
                 "remoteOwnerVerified":false,"importAuthorized":false,"synced":false
             }}))
         })
@@ -91,6 +107,7 @@ fn unavailable() -> Value {
         "bindingScanAvailable":false,"journalExists":false,
         "scannedDocuments":0,"exactBindings":0,"outdatedBindings":0,
         "preparedIntents":0,"onHold":0,"unmapped":0,
+        "documentStates":[],
         "remoteOwnerVerified":false,"importAuthorized":false,"synced":false
     }})
 }

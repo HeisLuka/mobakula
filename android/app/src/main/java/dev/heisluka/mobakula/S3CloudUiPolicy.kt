@@ -8,7 +8,23 @@ internal fun S3ReadOnlyProbe.Report.canOfferManualImport(): Boolean =
         bindingScan.available &&
         bindingScan.unmapped > 0 &&
         importedLocalNoteId == null &&
-        manualImportCandidates.isNotEmpty()
+        manualImportCandidates.any {
+            bindingScan.states[it.documentId] == S3BindingProbe.State.UNMAPPED
+        }
+
+internal fun S3ReadOnlyProbe.Report.canOfferCandidate(
+    candidate: S3ManualImport.Candidate,
+): Boolean = canOfferManualImport() &&
+    candidate in manualImportCandidates &&
+    bindingScan.states[candidate.documentId] == S3BindingProbe.State.UNMAPPED
+
+internal fun S3BindingProbe.State.displayStatus(): String = when (this) {
+    S3BindingProbe.State.UNMAPPED -> "Новая"
+    S3BindingProbe.State.EXACT -> "Уже получена"
+    S3BindingProbe.State.OUTDATED -> "Новая версия — требуется разбор"
+    S3BindingProbe.State.PREPARED -> "Незавершённый импорт"
+    S3BindingProbe.State.HELD -> "На проверке / HOLD"
+}
 
 internal fun S3ReadOnlyProbe.Report.canOfferCheckpointPin(): Boolean =
     checkpointRelation in setOf("first", "advanced") &&

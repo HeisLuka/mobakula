@@ -225,48 +225,14 @@ internal fun S3ReadOnlyProbeButton(
                         Button(onClick = onOpenNotes) { Text("Перейти к заметкам") }
                     }
                 }
-            } else if (result.canOfferManualImport()) {
-                Text("04  Выбрать Markdown",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold)
-                Text("Akula создаст новую локальную заметку после повторной " +
-                    "проверки. Названия документов не были получены с сервера.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                result.manualImportCandidates.forEachIndexed { index, candidate ->
-                    Card(
-                        shape = RoundedCornerShape(18.dp),
-                        border = BorderStroke(1.dp,
-                            MaterialTheme.colorScheme.outlineVariant),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface),
-                    ) {
-                        Column(Modifier.fillMaxWidth().padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("MD", style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary)
-                                Column(Modifier.weight(1f)) {
-                                    Text("Markdown " + (index + 1),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.SemiBold)
-                                    Text(candidate.documentId.take(8) + "… · " +
-                                        readableS3Bytes(candidate.bytes.toLong()),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        overflow = TextOverflow.Ellipsis, maxLines = 1)
-                                }
-                            }
-                            OutlinedButton(
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = enabled && !working,
-                                onClick = { selected = candidate },
-                            ) { Text("Получить локальную копию") }
-                        }
-                    }
-                }
+            } else if (result.checkpointRelation == "unchanged" &&
+                result.contentPreviewSupported && result.bindingScan.available &&
+                result.manualImportCandidates.isNotEmpty()) {
+                S3CandidateCards(
+                    result = result,
+                    enabled = enabled && !working,
+                    onSelect = { selected = it },
+                )
             } else if (result.manualImportCandidates.isNotEmpty() &&
                 result.importedLocalNoteId == null) {
                 Text("Импорт недоступен: проверьте и закрепите историю либо " +
@@ -299,7 +265,7 @@ internal fun S3ReadOnlyProbeButton(
             confirmButton = {
                 Button(
                     enabled = enabled && !working &&
-                        (report?.canOfferManualImport() == true),
+                        (report?.canOfferCandidate(candidate) == true),
                     onClick = {
                         selected = null
                         markWorking(true)
