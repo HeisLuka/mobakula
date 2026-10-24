@@ -31,6 +31,12 @@ class CloudUiSmokeContract(unittest.TestCase):
         self.assertIn("roundTrip_andS3NetworkPermission", runner)
         self.assertNotIn("roundTrip_andNoInternetPermission", runner)
 
+    def test_real_emulator_is_explicitly_opted_in(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text("utf8")
+        self.assertIn("android-runtime-acceptance", workflow)
+        self.assertIn("PR_RUNTIME_OPT_IN", workflow)
+        self.assertIn("steps.runtime.outputs.run == 'true'", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

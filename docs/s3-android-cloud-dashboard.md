@@ -41,3 +41,8 @@ The old JNI smoke selector was corrected to expect Android INTERNET
 permission granted for S3 HTTPS; this does not affect local File Gate.
 Mobile gate also builds Rust, two JNI ABIs and the Android APK. Live
 Yandex transport E2E remains opt-in and unproven without test credentials.
+
+Real emulator execution is opt-in through workflow_dispatch(android_runtime)
+or an explicit PR label android-runtime-acceptance. It runs the existing
+Android 35 KVM smoke and cloud tile/sheet Compose navigation, without
+any cloud login or provider credentials. Ordinary PR CI stays compile-only.
