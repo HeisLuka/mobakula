@@ -155,12 +155,29 @@ impl NoteVault {
     }
 
     pub fn create(&self, content: &str) -> Result<Note, NotesError> {
+        self.create_reserved(Uuid::new_v4(), content)
+    }
+
+    /// The S3 receive journal allocates this local UUID, never remote JSON.
+    /// File Gate create_new(true) prevents replacement; HistoryService and
+    /// a fresh disk readback must both succeed before returning a receipt.
+    /// Only the S4d4 Rust coordinator calls this reserved-ID entrypoint.
+    pub(crate) fn create_reserved(
+        &self, reserved_local_id: Uuid, content: &str,
+    ) -> Result<Note, NotesError> {
         Self::check_content(content)?;
-        // HistoryService observes normalized text; publish identical bytes
-        // to both primary File Gate and version snapshots.
+        // Already-validated LF-only remote bytes must not be normalized into
+        // different content without failing the source BLAKE3 check.
+        if content.as_bytes().contains(&b'\r') {
+            return Err(NotesError::new("invalid_content", "CRLF import refused"));
+        }
         let content = document::normalize_line_endings(content.to_owned());
         self.begin_write()?;
-        let id = Uuid::new_v4().to_string();
+        let id = reserved_local_id.to_string();
+        let parent = fs::symlink_metadata(&self.notes).map_err(NotesError::io)?;
+        if !parent.is_dir() || parent.file_type().is_symlink() {
+            return Err(NotesError::new("unsafe_root", "Notes directory changed"));
+        }
         let path = self.path(&id)?;
         let published = match gate::create(&self.core, &path, &content, Source::Me, None) {
             Ok(published) => published,

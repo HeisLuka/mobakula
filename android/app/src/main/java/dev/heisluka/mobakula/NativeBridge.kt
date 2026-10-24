@@ -35,5 +35,7 @@ internal object NativeBridge {
     external fun checkS3CheckpointProbe(session: String, head: ByteArray,
                                         manifests: Array<ByteArray>, prior: ByteArray): String
     external fun inspectS3BindingJournalProbe(session: String, head: ByteArray): String
+    external fun importS3VerifiedMarkdown(session: String, head: ByteArray,
+                                          documentId: String, body: ByteArray): String
     external fun endS3ReadProbe(session: String): String
 }

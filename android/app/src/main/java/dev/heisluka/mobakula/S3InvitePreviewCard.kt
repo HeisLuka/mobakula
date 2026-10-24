@@ -50,7 +50,7 @@ private fun readBoundedInvitation(context: Context, uri: Uri): ByteArray {
 
 /** Protected offline import only; never asserts remote owner trust or file Sync. */
 @Composable
-internal fun S3InvitePreviewCard() {
+internal fun S3InvitePreviewCard(onNoteImported: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val store = remember(context) { S3ProtectedInviteStore(context.applicationContext) }
@@ -208,7 +208,10 @@ internal fun S3InvitePreviewCard() {
                     }) { Text("Проверить и сохранить") }
                 }
             } else {
-                S3ReadOnlyProbeButton(store, enabled = !busy && preview != null)
+                S3ReadOnlyProbeButton(
+                    store, enabled = !busy && preview != null,
+                    onImported = onNoteImported,
+                )
                 Text("Конфигурация сохранена локально. Для замены сначала удалите её.",
                     style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(enabled = !busy, onClick = { confirmDelete = true }) {

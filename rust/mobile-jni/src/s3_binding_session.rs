@@ -58,7 +58,14 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_inspectS3BindingJ
                         && binding.blob_blake3 == candidate.blob_blake3 => prepared += 1,
                     Some(binding) if binding.phase == S3BindingPhase::Bound
                         && binding.revision_id == candidate.revision_id
-                        && binding.blob_blake3 == candidate.blob_blake3 => exact += 1,
+                        && binding.blob_blake3 == candidate.blob_blake3 => {
+                        // Durable mapping alone is not a claim that the
+                        // locally editable file still contains imported bytes.
+                        match vault.read(&binding.local_note_id.to_string()) {
+                            Ok(local) if local.hash == candidate.blob_blake3 => exact += 1,
+                            _ => held += 1,
+                        }
+                    },
                     Some(binding) if binding.phase == S3BindingPhase::Bound => outdated += 1,
                     Some(_) => held += 1,
                 }

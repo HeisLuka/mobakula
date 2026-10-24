@@ -101,11 +101,17 @@ pub extern "system" fn Java_dev_heisluka_mobakula_NativeBridge_verifyS3BlobsProb
             identity.copy_from_slice(digest.as_ref());
             slot.proven_blobs_head_sha256 = Some(identity);
             slot.provisional_candidates = plan.candidates.clone();
+            let candidate_refs: Vec<_> = plan.candidates.iter().map(|c| json!({
+                "documentId":c.document_id.to_string(),
+                "revisionId":c.revision_id.to_string(),
+                "blobHash":c.blob_blake3,"bytes":c.bytes,
+            })).collect();
             Ok(json!({"ok":true,"data":{
                 "blobsChecked":proof.blobs_checked,
                 "bytesChecked":proof.bytes_checked,
                 "contentChecked":true,
                 "receiveCandidates":plan.candidates.len(),
+                "candidateRefs":candidate_refs,
                 "needsReview":plan.needs_review(),
                 "forkedDocuments":plan.forked_documents,
                 "deletedDocuments":plan.deleted_documents,
