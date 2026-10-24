@@ -61,7 +61,7 @@ fun NotesScreen(modifier: Modifier = Modifier, state: NotesViewModel = viewModel
     }
 
     BackHandler(enabled = state.opened != null && !state.busy) { backToList() }
-    BackHandler(enabled = state.opened == null && tab == "files") { tab = "notes" }
+    BackHandler(enabled = state.opened == null && tab != "notes") { tab = "notes" }
 
     if (askDiscard) {
         AlertDialog(
@@ -133,6 +133,14 @@ fun NotesScreen(modifier: Modifier = Modifier, state: NotesViewModel = viewModel
                         onClick = { tab = "files" },
                         icon = { Text("⇅", style = MaterialTheme.typography.titleLarge) },
                         label = { Text("Файлы") },
+                        modifier = Modifier.testTag("tab_files"),
+                    )
+                    NavigationBarItem(
+                        selected = tab == "cloud",
+                        onClick = { tab = "cloud" },
+                        icon = { Text("☁", style = MaterialTheme.typography.titleLarge) },
+                        label = { Text("Облако") },
+                        modifier = Modifier.testTag("tab_cloud"),
                     )
                 }
             }
@@ -166,6 +174,10 @@ fun NotesScreen(modifier: Modifier = Modifier, state: NotesViewModel = viewModel
                         exportId = id
                         exportPicker.launch("akula-" + id + ".md")
                     },
+                    modifier = Modifier.weight(1f),
+                )
+                tab == "cloud" -> CloudSourcesScreen(
+                    onNoteImported = state::refresh,
                     onOpenNotes = { tab = "notes" },
                     modifier = Modifier.weight(1f),
                 )
@@ -431,54 +443,6 @@ private fun NotesEditor(
                 "черновика создаётся отдельно, но не заменяет проверенное сохранение.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-private fun NotesFiles(
-    state: NotesViewModel,
-    onImport: () -> Unit,
-    onExport: (String) -> Unit, onOpenNotes: () -> Unit,
-    modifier: Modifier,
-) {
-    var selectExport by rememberSaveable { mutableStateOf(false) }
-    Column(if (selectExport) modifier else modifier.verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(13.dp)) {
-        Text("Импорт и экспорт", style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold)
-        FileActionCard("↑", "Импорт .md / .txt",
-            "Добавить файл в локальные заметки.",
-            onImport, enabled = !state.busy && state.pendingCreateId == null)
-        FileActionCard("↓", "Экспорт",
-            "Выбрать заметку и сохранить её копию.",
-            { selectExport = !selectExport }, enabled = !state.busy)
-        if (selectExport) {
-            Text("Выберите заметку для экспорта", style = MaterialTheme.typography.titleMedium)
-            LazyColumn(Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(state.headers, key = { it.id }) { note ->
-                    TextButton(onClick = { onExport(note.id) }, enabled = !state.busy,
-                        modifier = Modifier.fillMaxWidth()) {
-                        Text(note.title.ifBlank { "Без названия" }, modifier = Modifier.weight(1f),
-                            maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("↓")
-                    }
-                }
-            }
-        } else {
-            Surface(shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.primaryContainer) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Локальное хранилище", style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold)
-                    Text("Заметки хранятся на этом устройстве и доступны без интернета.",
-                        style = MaterialTheme.typography.bodyMedium)
-                    Text("Экспорт отдельной заметки — не резервная копия всей истории.",
-                        style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            S3InvitePreviewCard(onNoteImported = state::refresh, onOpenNotes = onOpenNotes)
         }
     }
 }

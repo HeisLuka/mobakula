@@ -17,6 +17,18 @@ class CloudUiSmokeContract(unittest.TestCase):
         self.assertIn("verify_instrumentation(cloud_ui)", runner)
         self.assertIn("cloud_s3_sheet", test)
         self.assertIn("cloud_yandex_tile", test)
+        notes = (ROOT / "android/app/src/main/java/dev/heisluka/mobakula/"
+                 "NotesScreen.kt").read_text("utf8")
+        cloud = (ROOT / "android/app/src/main/java/dev/heisluka/mobakula/"
+                 "CloudSourcesScreen.kt").read_text("utf8")
+        files = (ROOT / "android/app/src/main/java/dev/heisluka/mobakula/"
+                 "NotesFiles.kt").read_text("utf8")
+        self.assertIn('tab == "cloud"', notes)
+        self.assertIn('tab_cloud', notes)
+        self.assertIn('tab_files', notes)
+        self.assertIn('cloud_sources_screen', cloud)
+        self.assertIn('S3InvitePreviewCard(', cloud)
+        self.assertNotIn('S3InvitePreviewCard(', files)
         self.assertIn("Синхронизировано", test)
 
     def test_runtime_s3_permission_matches_installed_manifest(self):
