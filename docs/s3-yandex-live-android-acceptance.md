@@ -38,6 +38,10 @@ Optional --serial specifies a particular emulator. The host runner:
   in app-private no_backup/s3-live-fixture; no secrets are ever passed
   as ADB command-line arguments, remote URLs, or test arguments.
 - Stages public index.json as the exact expected document/revision/blob.
+  Before ANY network request the instrumented test opens the password-encrypted
+  Core invitation and requires the EXACT Yandex endpoint, region, bucket,
+  prefix, VaultId and claimed genesis from that public inventory. A mismatched
+  invitation is rejected without persisting it or accepting an alien bucket.
   The instrumented test creates an isolated test vault inside app-private
   noBackupFilesDir. It never reads or modifies the user's note vault.
 - Starts genuine HTTPS HEAD/GET against the FIXED Yandex endpoint using

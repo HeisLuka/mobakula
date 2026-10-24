@@ -48,6 +48,8 @@ class S3LiveReceiveDeviceTest {
         check(meta.getString("provider") == "yandex" &&
               bucket.matches(Regex("akula-e2e-[a-z0-9-]{1,50}")) &&
               prefix.startsWith("akula-e2e/") &&
+              meta.getString("genesisFingerprint").matches(Regex("[0-9a-f]{64}")) &&
+              meta.getJSONArray("objects").length() == 5 &&
               !meta.getBoolean("remoteOwnerVerified") &&
               !meta.getBoolean("syncAuthorized"))
         return meta
@@ -55,7 +57,9 @@ class S3LiveReceiveDeviceTest {
 
     private fun scope(meta: JSONObject): String {
         val id = meta.getString("vaultId")
-        check(id.matches(Regex("[0-9a-f-]{36}")))
+        check(id.matches(
+            Regex("[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+        ))
         return "e2e-" + id.replace("-", "").take(25)
     }
 
@@ -85,7 +89,7 @@ class S3LiveReceiveDeviceTest {
         )
     }
 
-    private fun installTestInvitation(store: S3ProtectedInviteStore) {
+    private fun installTestInvitation(store: S3ProtectedInviteStore, meta: JSONObject) {
         check(!store.exists()) { "Test profile already exists; never overwrite" }
         val envelopeFile = File(staging, "invite.akula-sync")
         val passFile = File(staging, "password.bin")
@@ -95,6 +99,21 @@ class S3LiveReceiveDeviceTest {
         check(envelope.size in 32..16384 && passBytes.size in 20..1024)
         val password = String(passBytes, Charsets.UTF_8).toCharArray()
         try {
+            // A valid password alone does NOT prove this invitation belongs
+            // to the fixture whose hashes and typed IDs are under test.
+            val checked = JSONObject(NativeBridge.inspectS3Invitation(envelope, password))
+            check(checked.optBoolean("ok", false)) { "Test invitation authentication failed" }
+            val identity = checked.getJSONObject("data")
+            check(!identity.optBoolean("trusted", true) &&
+                identity.getString("provider") == "yandex" &&
+                identity.getString("endpoint") == "https://storage.yandexcloud.net" &&
+                identity.getString("region") == "ru-central1" &&
+                identity.getString("bucket") == meta.getString("bucket") &&
+                identity.getString("prefix") == meta.getString("prefix") &&
+                identity.getString("cloudVaultId") == meta.getString("vaultId") &&
+                identity.getString("claimedGenesisFingerprint") ==
+                    meta.getString("genesisFingerprint")
+            ) { "The encrypted invitation does not match the Core V1 test fixture" }
             store.saveNew(envelope, password)
         } finally {
             passBytes.fill(0)
@@ -116,7 +135,7 @@ class S3LiveReceiveDeviceTest {
         val store = S3ProtectedInviteStore(app, scope(meta))
         val checkpoint = S3CheckpointStore(app, scope(meta))
         check(checkpoint.read() == null)
-        installTestInvitation(store)
+        installTestInvitation(store, meta)
 
         val first = S3ReadOnlyProbe.run(store, checkpoint)
         assertEquals(1L, first.latestGeneration)
@@ -150,6 +169,7 @@ class S3LiveReceiveDeviceTest {
         val note = requireOk(JSONObject().put("action", "read").put("id", local))
         assertEquals(selected.blobHash, note.getString("hash"))
         assertTrue(note.getString("content").startsWith("# Akula S3 acceptance fixture"))
+        assertTrue(note.getString("content").contains("Vault: " + meta.getString("vaultId")))
         val listing = call(JSONObject().put("action", "list"))
             .getJSONArray("data")
         assertEquals(1, listing.length())

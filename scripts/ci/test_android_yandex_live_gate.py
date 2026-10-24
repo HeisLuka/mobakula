@@ -30,6 +30,8 @@ class S3LiveAcceptanceContract(unittest.TestCase):
             "INSTRUMENTATION_STATUS: akula_s3_live=imported_once\nFAILURES!!!\n",
             "OK (0 tests)\n",
             "INSTRUMENTATION_STATUS: akula_s3_live=wrong\nOK (1 test)\n",
+            "INSTRUMENTATION_STATUS: akula_s3_live=imported_once-forged\nOK (1 test)\n",
+            "INSTRUMENTATION_STATUS: akula_s3_live=imported_once\nOK (1 test)\nOK (1 test)\n",
         ):
             with self.assertRaises(RuntimeError):
                 gate.check_instrumentation(bad, "imported_once")
@@ -67,6 +69,11 @@ class S3LiveAcceptanceContract(unittest.TestCase):
             "checkpoint.pinVerified",
             "S3ProtectedInviteStore",
             "S3CheckpointStore",
+            "NativeBridge.inspectS3Invitation(envelope, password)",
+            "identity.getString(\"bucket\") == meta.getString(\"bucket\")",
+            "identity.getString(\"cloudVaultId\") == meta.getString(\"vaultId\")",
+            "meta.getString(\"genesisFingerprint\")",
+            "Vault: \" + meta.getString(\"vaultId\")",
             "assertEquals(1, after.length())",
             "assertEquals(1, listing.length())",
             "assertEquals(1, read.bindingScan.exact)",

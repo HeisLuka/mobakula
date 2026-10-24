@@ -36,10 +36,12 @@ def is_disposable_emulator(properties):
 
 
 def check_instrumentation(text, expected):
-    if not re.search(r"(?m)^OK \(1 test\)\s*$", text):
+    if ("FAILURES!!!" in text or "INSTRUMENTATION_FAILED" in text or
+            len(re.findall(r"(?m)^OK \(1 test\)\s*$", text)) != 1):
         raise RuntimeError("Live Android instrumentation did not pass exactly one test")
-    if (RECEIPT + "=" + expected) not in text:
-        raise RuntimeError("Live Android instrumentation lacks expected receipt")
+    status = re.escape(RECEIPT + "=" + expected)
+    if len(re.findall(r"(?m)^INSTRUMENTATION_STATUS: " + status + r"\s*$", text)) != 1:
+        raise RuntimeError("Live Android instrumentation lacks exact expected receipt")
 
 
 def main():
