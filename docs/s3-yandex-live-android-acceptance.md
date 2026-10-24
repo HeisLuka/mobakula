@@ -55,7 +55,8 @@ Optional --serial specifies a particular emulator. The host runner:
   Checks the new note content hash, regular note listing, local UUID
   and unsynced, unauthenticated-source receipt.
 - Performs a real app force-stop between two independent instrumentation
-  invocations. From a fresh process it reopens the saved local note,
+  invocations. The second test explicitly requires a DIFFERENT Android PID
+  than the first. From the fresh process it reopens the saved local note,
   checks checkpoint/journal BOUND, attempts importing the SAME source
   DocumentId again, and requires an exact typed existing-binding refusal.
   An HTTP timeout, credential failure or malformed response MUST fail the
@@ -63,16 +64,18 @@ Optional --serial specifies a particular emulator. The host runner:
   stays exactly one. Once verification succeeds, the test deletes its
   Keystore-protected S3 invitation and key while retaining only the
   disposable note and journal for audit.
-- Deletes staging files containing the invitation, password and public
-  index even on test failure, without deleting imported test notes
-  needed for follow-up inspection. Keystore/SQLite remain isolated
-  under a new scope derived from the fixture VaultId.
+- Always runs a third test that purges the invitation and its Keystore key
+  (even if network import or restart failed), then deletes staged plaintext
+  password and invitation files in a final cleanup block. The imported
+  disposable note and SQLite journal remain for audit. No account key is
+  intentionally retained after a failed acceptance run.
 
 ## Evidence required
 
-Two independent Android instrumentation receipts:
+Three separately checked Android instrumentation receipts:
 - akula_s3_live=imported_once
 - akula_s3_live=reopened_no_duplicate
+- akula_s3_live=credentials_purged (also mandatory after failure)
 
 The runner requires exactly OK (1 test) for each receipt, not mere
 instrumentation exit code 0. It prints no cloud key material.

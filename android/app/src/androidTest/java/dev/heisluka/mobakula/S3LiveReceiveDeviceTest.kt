@@ -2,6 +2,7 @@ package dev.heisluka.mobakula
 
 import android.os.Build
 import android.os.Bundle
+import android.os.Process
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
@@ -176,6 +177,7 @@ class S3LiveReceiveDeviceTest {
         assertEquals(local, listing.getJSONObject(0).getString("id"))
 
         val record = JSONObject().put("schema", 1)
+            .put("originPid", Process.myPid())
             .put("documentId", selected.documentId)
             .put("revisionId", selected.revisionId)
             .put("blobHash", selected.blobHash)
@@ -201,6 +203,8 @@ class S3LiveReceiveDeviceTest {
         check(recordFile.isFile) { "Prepare stage did not complete; refuse" }
         val record = JSONObject(recordFile.readText(Charsets.UTF_8))
         assertEquals(1, record.getInt("schema"))
+        assertNotEquals("Test did not restart Android process",
+            record.getInt("originPid"), Process.myPid())
         assertEquals(scope(meta), record.getString("scope"))
         assertFalse(record.getBoolean("remoteOwnerVerified"))
         assertFalse(record.getBoolean("synced"))
@@ -237,5 +241,16 @@ class S3LiveReceiveDeviceTest {
         store.delete()
         assertFalse("Test S3 credentials still persisted", store.exists())
         receipt("reopened_no_duplicate")
+    }
+
+    /** Runs even when the live test failed; never reuses the S3 credentials. */
+    @Test
+    fun purgeTestS3Credentials() {
+        ensureDisposableEmulator()
+        val meta = metadata()
+        val store = S3ProtectedInviteStore(app, scope(meta))
+        store.delete()
+        assertFalse("Test S3 credentials still persisted", store.exists())
+        receipt("credentials_purged")
     }
 }

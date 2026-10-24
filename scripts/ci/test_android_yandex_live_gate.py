@@ -40,6 +40,8 @@ class S3LiveAcceptanceContract(unittest.TestCase):
         source = HOST.read_text(encoding="utf8")
         for marker in (
             "--ack-disposable-emulator", "--ack-test-import",
+            "purgeTestS3Credentials",
+            "check_instrumentation(purged, \"credentials_purged\")",
             "AKULA_YANDEX_INVITE_PASSWORD", "ro.kernel.qemu",
             "run-as", "no_backup/s3-live-fixture",
             "password.bin", "invite.akula-sync",
@@ -65,6 +67,8 @@ class S3LiveAcceptanceContract(unittest.TestCase):
         for marker in (
             "S3ManualImport.ExistingSourceBinding",
             "store.delete()",
+            "fun purgeTestS3Credentials()",
+            "record.getInt(\"originPid\"), Process.myPid()",
             "S3ReadOnlyProbe.run(store, checkpoint, selected)",
             "checkpoint.pinVerified",
             "S3ProtectedInviteStore",
@@ -78,6 +82,7 @@ class S3LiveAcceptanceContract(unittest.TestCase):
             "assertEquals(1, listing.length())",
             "assertEquals(1, read.bindingScan.exact)",
             "rejectedAsExistingBinding",
+            "credentials_purged",
             "ensureDisposableEmulator()",
         ):
             self.assertIn(marker, android)

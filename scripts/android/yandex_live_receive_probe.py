@@ -115,12 +115,24 @@ def main():
             print("NOT a publisher trust proof or automatic S3 synchronization.")
             return 0
         finally:
-            # Leave verified local test note for investigation, but never
-            # leave clear-text password, invite or staged IDs behind.
-            adb("shell", "run-as", APP, "sh", "-c",
-                "rm -f " + PRIVATE_STAGE + "/password.bin " +
-                PRIVATE_STAGE + "/invite.akula-sync " +
-                PRIVATE_STAGE + "/index.json")
+            # Execute credential purge EVEN if import, HTTP or cold reopen
+            # failed. Keep the disposable note and durable journal for audit.
+            try:
+                adb("shell", "am", "force-stop", APP)
+                purged = adb(
+                    "shell", "am", "instrument", "-w", "-e", "class",
+                    TEST_CLASS + "#purgeTestS3Credentials", RUNNER, timeout=300,
+                )
+                check_instrumentation(purged, "credentials_purged")
+                print("PASS: Android test S3 invitation/Keystore credentials purged",
+                      flush=True)
+            finally:
+                # Even if Android Keystore is inaccessible, delete plaintext
+                # staged password and invitation; NEVER log their contents.
+                adb("shell", "run-as", APP, "sh", "-c",
+                    "rm -f " + PRIVATE_STAGE + "/password.bin " +
+                    PRIVATE_STAGE + "/invite.akula-sync " +
+                    PRIVATE_STAGE + "/index.json")
     except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
         print("FAIL: live Yandex S3 Android acceptance not proven. "
               "Inspect CI/device receipts without sharing credentials.",
