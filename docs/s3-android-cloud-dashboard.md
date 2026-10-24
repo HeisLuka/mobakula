@@ -35,5 +35,9 @@ The cloud source sheet has an explicit, linear flow:
 Pure JVM S3CloudUiPolicyTest exercises every gate on the import/pin
 buttons and neutral sizes. Android Compose instrumentation in the parent
 UI PR checks tile navigation and absence of a "Synchronized" label.
+The existing opt-in cold_reopen_probe.py --include-ui now executes that
+S3 tile/sheet instrumentation before the normal editor cold-reopen flow.
+The old JNI smoke selector was corrected to expect Android INTERNET
+permission granted for S3 HTTPS; this does not affect local File Gate.
 Mobile gate also builds Rust, two JNI ABIs and the Android APK. Live
 Yandex transport E2E remains opt-in and unproven without test credentials.
