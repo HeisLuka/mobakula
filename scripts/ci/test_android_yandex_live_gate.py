@@ -61,6 +61,8 @@ class S3LiveAcceptanceContract(unittest.TestCase):
             self.assertIn("fun " + method, android)
             self.assertIn(status, android)
         for marker in (
+            "S3ManualImport.ExistingSourceBinding",
+            "store.delete()",
             "S3ReadOnlyProbe.run(store, checkpoint, selected)",
             "checkpoint.pinVerified",
             "S3ProtectedInviteStore",
@@ -68,6 +70,7 @@ class S3LiveAcceptanceContract(unittest.TestCase):
             "assertEquals(1, after.length())",
             "assertEquals(1, listing.length())",
             "assertEquals(1, read.bindingScan.exact)",
+            "rejectedAsExistingBinding",
             "ensureDisposableEmulator()",
         ):
             self.assertIn(marker, android)

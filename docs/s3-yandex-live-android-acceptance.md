@@ -53,8 +53,12 @@ Optional --serial specifies a particular emulator. The host runner:
 - Performs a real app force-stop between two independent instrumentation
   invocations. From a fresh process it reopens the saved local note,
   checks checkpoint/journal BOUND, attempts importing the SAME source
-  DocumentId again, and asserts the duplicate is refused and the note
-  count stays exactly one.
+  DocumentId again, and requires an exact typed existing-binding refusal.
+  An HTTP timeout, credential failure or malformed response MUST fail the
+  test instead of masquerading as duplicate protection. The note count
+  stays exactly one. Once verification succeeds, the test deletes its
+  Keystore-protected S3 invitation and key while retaining only the
+  disposable note and journal for audit.
 - Deletes staging files containing the invitation, password and public
   index even on test failure, without deleting imported test notes
   needed for follow-up inspection. Keystore/SQLite remain isolated

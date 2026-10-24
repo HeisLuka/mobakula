@@ -197,13 +197,14 @@ class S3LiveReceiveDeviceTest {
         assertEquals(record.getString("documentId"), selected.documentId)
         assertEquals(record.getString("revisionId"), selected.revisionId)
 
-        var blocked = false
+        var rejectedAsExistingBinding = false
         try {
             S3ReadOnlyProbe.run(store, checkpoint, selected)
-        } catch (_: IOException) {
-            blocked = true
+        } catch (_: S3ManualImport.ExistingSourceBinding) {
+            rejectedAsExistingBinding = true
         }
-        assertTrue("The same remote DocumentId must never be imported twice", blocked)
+        assertTrue("Require exact existing-binding rejection, not a network error",
+            rejectedAsExistingBinding)
         val after = call(JSONObject().put("action", "list"))
             .getJSONArray("data")
         assertEquals(1, after.length())
@@ -211,6 +212,10 @@ class S3LiveReceiveDeviceTest {
         assertEquals(record.getString("blobHash"), requireOk(
             JSONObject().put("action", "read").put("id", local)
         ).getString("hash"))
+        // Retain the test note and durable journal for audit; remove the
+        // protected S3 invitation and its non-exportable Keystore key.
+        store.delete()
+        assertFalse("Test S3 credentials still persisted", store.exists())
         receipt("reopened_no_duplicate")
     }
 }

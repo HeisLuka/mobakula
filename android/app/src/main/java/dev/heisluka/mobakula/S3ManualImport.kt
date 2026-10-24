@@ -11,6 +11,14 @@ internal object S3ManualImport {
     private val UUID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     private val HASH = Regex("[0-9a-f]{64}")
 
+    internal class ExistingSourceBinding : IOException("S3 document has a durable receive binding")
+
+    /** Do not allow an unrelated HTTP/transport failure to count as replay denial. */
+    internal fun classifyImportFailure(code: String): IOException =
+        if (code == "existing_binding_needs_review") ExistingSourceBinding()
+        else IOException("Импорт не завершён: " + code +
+            ". Проверьте заметки и журнал, не повторяйте вслепую.")
+
     internal data class Candidate(
         val documentId: String,
         val revisionId: String,
@@ -75,10 +83,7 @@ internal object S3ManualImport {
         if (!response.optBoolean("ok", false)) {
             // The Rust journal might be on HOLD and the file might already
             // exist. Do not retry automatically after any failure.
-            throw IOException(
-                "Импорт не завершён: " + response.optString("code", "needs_review") +
-                    ". Проверьте заметки и журнал, не повторяйте вслепую."
-            )
+            throw classifyImportFailure(response.optString("code", "needs_review"))
         }
         val receipt = response.getJSONObject("data")
         val localId = receipt.getString("localNoteId")
