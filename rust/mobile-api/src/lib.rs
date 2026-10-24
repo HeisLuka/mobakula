@@ -48,3 +48,6 @@ pub mod s3_receive_plan;
 
 /// Local, origin-scoped, read-only S3 ancestry checkpoint comparison.
 pub mod s3_checkpoint;
+
+/// Durable source-scoped receive intents; no File Gate publish authority.
+pub mod s3_binding_journal;

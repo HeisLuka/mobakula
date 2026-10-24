@@ -98,6 +98,24 @@ internal fun S3ReadOnlyProbeButton(store: S3ProtectedInviteStore, enabled: Boole
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        report?.takeIf { it.bindingScan.available }?.let { result ->
+            val binding = result.bindingScan
+            Text(
+                "Постоянные привязки S3: " +
+                    "совпадающих " + binding.exact +
+                    ", устаревших " + binding.outdated +
+                    ", незавершённых " + binding.prepared +
+                    ", заблокированных " + binding.held +
+                    ", ещё не привязанных " + binding.unmapped + ". " +
+                    (if (!binding.journalExists) {
+                        "Журнал привязок ещё не создавался. "
+                    } else {
+                        "Это сохранённые намерения, а не разрешение на импорт. "
+                    }) +
+                    "Никакие заметки не изменены.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         report?.let { result ->
             Text(
                 when (result.checkpointRelation) {
