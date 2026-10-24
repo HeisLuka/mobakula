@@ -1,243 +1,350 @@
 package dev.heisluka.mobakula
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * No connected/synced badge: an S3 response is not an owner identity proof,
- * and matching genesis bytes are not permission to mutate local files.
+ * User-facing read/receive workflow. Nothing becomes "synced" merely because
+ * S3 returns a valid hash or because the local checkpoint was pinned.
  */
 @Composable
 internal fun S3ReadOnlyProbeButton(
-    store: S3ProtectedInviteStore, enabled: Boolean, onImported: () -> Unit,
+    store: S3ProtectedInviteStore,
+    enabled: Boolean,
+    onImported: () -> Unit,
+    onOpenNotes: () -> Unit = {},
     onWorkingChanged: (Boolean) -> Unit = {},
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val checkpoints = remember(context) { S3CheckpointStore(context) }
+    val scope = rememberCoroutineScope()
     var working by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf<S3ReadOnlyProbe.Report?>(null) }
-    var failure by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var showDetails by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<S3ManualImport.Candidate?>(null) }
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current.applicationContext
-    val checkpoints = remember(context) { S3CheckpointStore(context) }
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Button(enabled = enabled && !working, onClick = {
-            working = true
-            onWorkingChanged(true)
-            report = null
-            failure = null
-            scope.launch {
-                try {
-                    report = withContext(Dispatchers.IO) {
-                        S3ReadOnlyProbe.run(store, checkpoints)
+
+    fun markWorking(value: Boolean) {
+        working = value
+        onWorkingChanged(value)
+    }
+
+    Column(
+        Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        HorizontalDivider()
+        Text("02  Проверить источник", style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold)
+        Text("Akula прочитает неизменяемые данные S3, проверит цепочку " +
+            "ревизий и контрольные суммы. Файлы на устройстве не изменятся.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Button(
+            enabled = enabled && !working,
+            modifier = Modifier.fillMaxWidth(),
+            onClick = {
+                markWorking(true)
+                report = null
+                error = null
+                notice = null
+                scope.launch {
+                    try {
+                        report = withContext(Dispatchers.IO) {
+                            S3ReadOnlyProbe.run(store, checkpoints)
+                        }
+                    } catch (_: S3CheckpointProbe.CheckpointMismatch) {
+                        error = "История S3 расходится с закреплённой на этом устройстве. " +
+                            "Импорт заблокирован."
+                    } catch (_: Exception) {
+                        error = "Проверка не завершилась. Проверьте сеть, ключи, " +
+                            "содержимое S3 и время устройства."
+                    } finally {
+                        markWorking(false)
                     }
-                } catch (_: S3CheckpointProbe.CheckpointMismatch) {
-                    failure = "S3 вернул старую либо расходящуюся историю. " +
-                        "Контрольная точка защищена: импорт заблокирован."
-                } catch (_: Exception) {
-                    failure = "S3 проверка чтения не пройдена. " +
-                        "Проверьте ключи, сеть, удалённую историю и время устройства."
-                } finally {
-                    working = false
-                    onWorkingChanged(false)
+                }
+            },
+        ) {
+            Text(if (report == null) "Проверить содержимое S3" else "Проверить повторно")
+        }
+        if (working) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Text("Проверяем историю и байты. Не закрывайте панель.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        error?.let { message ->
+            Surface(shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.errorContainer) {
+                Text(message, Modifier.fillMaxWidth().padding(12.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer)
+            }
+        }
+        notice?.let { message ->
+            Surface(shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.primaryContainer) {
+                Text(message, Modifier.fillMaxWidth().padding(12.dp),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        report?.let { result ->
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        if (result.contentPreviewSupported) "Содержимое проверено"
+                        else "Проверена только структура S3",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        S3Metric(result.latestGeneration.toString(), "Поколение",
+                            Modifier.weight(1f))
+                        S3Metric(result.distinctDocumentIds.toString(), "Документы",
+                            Modifier.weight(1f))
+                        S3Metric(result.verifiedBlobCount.toString(), "Blob",
+                            Modifier.weight(1f))
+                    }
+                    Text(
+                        if (result.contentPreviewSupported)
+                            "Проверено " + readableS3Bytes(result.verifiedBlobBytes) +
+                                ". Данные не удостоверяют владельца сервера."
+                        else "Предпросмотр ограничен размером набора. " +
+                            "Импортировать непроверенное содержимое нельзя.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (result.receiveNeedsReviewPreview > 0 ||
+                        result.bindingScan.held > 0) {
+                        Text("Требуют разбора: " +
+                            (result.receiveNeedsReviewPreview + result.bindingScan.held) +
+                            ". Akula не перезаписывает спорные заметки.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error)
+                    }
+                    TextButton(onClick = { showDetails = !showDetails }) {
+                        Text(if (showDetails) "Скрыть детали проверки"
+                            else "Технические детали")
+                    }
+                    if (showDetails) {
+                        HorizontalDivider()
+                        Text("Манифестов: " + result.manifestsChecked +
+                            " · Shard: " + result.validatedShards +
+                            " · Ревизий: " + result.metadataRevisionsChecked,
+                            style = MaterialTheme.typography.bodySmall)
+                        Text("Локальные слоты: отсутствуют " + result.localSlotsAbsent +
+                            ", конфликты " + result.localSlotsConflicting +
+                            ", небезопасные " + result.localSlotsUnsafe,
+                            style = MaterialTheme.typography.bodySmall)
+                        val scan = result.bindingScan
+                        Text("Привязки: совпадают " + scan.exact +
+                            ", неактуальны " + scan.outdated +
+                            ", незавершённые " + scan.prepared +
+                            ", HOLD " + scan.held + ", новые " + scan.unmapped,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
-        }) {
-            Text("Проверить S3 (только чтение)")
-        }
-        if (working) CircularProgressIndicator(Modifier.padding(8.dp))
-        report?.let { result ->
-            Text(
-                "Цепочка S3 прочитана: поколение " + result.latestGeneration +
-                    ", манифестов " + result.manifestsChecked +
-                    ", проверено наборов " + result.validatedShards +
-                    ", документов " + result.distinctDocumentIds +
-                    (if (result.metadataPreviewSupported) {
-                        ", проверено метаданных ревизий " +
-                            result.metadataRevisionsChecked + ". "
-                    } else {
-                        ". Метаданные ревизий не проверены: " +
-                            "превышен лимит предпросмотра. "
-                    }) +
-                    (if (result.contentPreviewSupported) {
-                        "Проверено содержимого: " + result.verifiedBlobCount +
-                            " объектов, " + result.verifiedBlobBytes + " байт. "
-                    } else {
-                        "Содержимое заметок не проверено (лимит предпросмотра). "
-                    }) +
-                    "Владелец сервера отдельно не подтверждён. " +
-                    "Синхронизация заметок не включена.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        report?.takeIf { it.contentPreviewSupported }?.let { result ->
-            Text(
-                "Предварительный план приёма: " +
-                    result.receiveCandidatesPreview +
-                    " Markdown-документов подходят для дальнейшей проверки, " +
-                    result.receiveNeedsReviewPreview +
-                    " требуют разбора. Локальные пересечения ещё не проверены. " +
-                    "Импорт не разрешён и ничего не записывает.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        report?.takeIf { it.localSlotsChecked }?.let { result ->
-            Text(
-                "Сверка локальных UUID-слотов: отсутствуют " +
-                    result.localSlotsAbsent + ", одинаковое содержимое без привязки " +
-                    result.localSlotsIdenticalUnbound + ", конфликты " +
-                    result.localSlotsConflicting + ", небезопасные объекты " +
-                    result.localSlotsUnsafe + ". " +
-                    "Это не разрешение импорта: идентичность источника и " +
-                    "локальная привязка ещё не подтверждены.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        report?.takeIf { it.bindingScan.available }?.let { result ->
-            val binding = result.bindingScan
-            Text(
-                "Постоянные привязки S3: " +
-                    "совпадающих " + binding.exact +
-                    ", устаревших " + binding.outdated +
-                    ", незавершённых " + binding.prepared +
-                    ", заблокированных " + binding.held +
-                    ", ещё не привязанных " + binding.unmapped + ". " +
-                    (if (!binding.journalExists) {
-                        "Журнал привязок ещё не создавался. "
-                    } else {
-                        "Это сохранённые намерения, а не разрешение на импорт. "
-                    }) +
-                    "Никакие заметки не изменены.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        report?.let { result ->
+            Text("03  История на устройстве",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold)
             Text(
                 when (result.checkpointRelation) {
-                    "first" -> "На устройстве нет закреплённой истории S3."
-                    "unchanged" -> "Локальная контрольная точка S3 совпадает."
-                    "advanced" -> "Новая история содержит закреплённую контрольную точку."
-                    else -> "История S3 пока не закреплена."
+                    "first" -> "Это первая проверка источника. Закрепите историю, " +
+                        "чтобы обнаруживать последующие откаты."
+                    "advanced" -> "История изменилась, но содержит прежнюю " +
+                        "контрольную точку. Подтвердите новое состояние."
+                    "unchanged" -> "Контрольная точка совпала с сохранённой. " +
+                        "Вы можете выбрать отдельную проверенную заметку."
+                    else -> "История не закреплена; импорт пока недоступен."
                 },
                 style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            val proposal = result.checkpointProposal
-            if (proposal != null && result.checkpointRelation != "unchanged") {
-                Button(enabled = enabled && !working, onClick = {
-                    working = true
-                    onWorkingChanged(true)
-                    failure = null
-                    scope.launch {
-                        try {
-                            withContext(Dispatchers.IO) {
-                                checkpoints.pinVerified(proposal.candidate, proposal.expectedPrior)
+            if (result.canOfferCheckpointPin()) {
+                val proposal = result.checkpointProposal
+                if (proposal != null) {
+                    OutlinedButton(
+                        enabled = enabled && !working,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            markWorking(true)
+                            error = null
+                            scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        checkpoints.pinVerified(
+                                            proposal.candidate, proposal.expectedPrior
+                                        )
+                                    }
+                                    // Pinning is NOT a fresh network observation.
+                                    // Do not fake "unchanged" or leave stale cards active.
+                                    selected = null
+                                    report = null
+                                    notice = "История закреплена. Проверьте S3 ещё раз " +
+                                        "перед выбором заметки."
+                                } catch (_: Exception) {
+                                    error = "Не удалось закрепить историю. " +
+                                        "Ничего не импортировано."
+                                } finally {
+                                    markWorking(false)
+                                }
                             }
-                            report = result.copy(
-                                checkpointRelation = "unchanged",
-                                checkpointProposal = null,
-                            )
-                        } catch (_: Exception) {
-                            failure = "Не удалось закрепить S3 checkpoint. " +
-                                "Повторите проверку без изменения файлов."
-                        } finally {
-                            working = false
-                            onWorkingChanged(false)
-                        }
-                    }
-                }) { Text("Закрепить проверенное состояние S3") }
-                Text(
-                    "Закрепление защищает от обнаруживаемого отката удалённой " +
-                        "истории на этом устройстве, но не подтверждает владельца " +
-                        "S3 и не разрешает запись заметок.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-        report?.takeIf {
-            it.checkpointRelation == "unchanged" && it.manualImportCandidates.isNotEmpty()
-        }?.let { verified ->
-            Text(
-                "Внешний источник S3 не удостоверен. Можно вручную принять только " +
-                    "отдельную Markdown-заметку без автоматической синхронизации.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            verified.manualImportCandidates.forEach { candidate ->
-                OutlinedButton(
-                    enabled = enabled && !working,
-                    onClick = { selected = candidate },
-                ) {
-                    Text("Импортировать Markdown: " + candidate.documentId.take(8))
+                        },
+                    ) { Text("Закрепить проверенную историю") }
                 }
             }
+            if (result.importedLocalNoteId != null) {
+                Surface(shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer) {
+                    Column(Modifier.fillMaxWidth().padding(15.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Заметка добавлена локально",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                        Text("Создана отдельная Markdown-заметка. " +
+                            "Никакая синхронизация не включена.",
+                            style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onOpenNotes) { Text("Перейти к заметкам") }
+                    }
+                }
+            } else if (result.canOfferManualImport()) {
+                Text("04  Выбрать Markdown",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold)
+                Text("Akula создаст новую локальную заметку после повторной " +
+                    "проверки. Названия документов не были получены с сервера.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                result.manualImportCandidates.forEachIndexed { index, candidate ->
+                    Card(
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(1.dp,
+                            MaterialTheme.colorScheme.outlineVariant),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface),
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("MD", style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary)
+                                Column(Modifier.weight(1f)) {
+                                    Text("Markdown " + (index + 1),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold)
+                                    Text(candidate.documentId.take(8) + "… · " +
+                                        readableS3Bytes(candidate.bytes.toLong()),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        overflow = TextOverflow.Ellipsis, maxLines = 1)
+                                }
+                            }
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = enabled && !working,
+                                onClick = { selected = candidate },
+                            ) { Text("Получить локальную копию") }
+                        }
+                    }
+                }
+            } else if (result.manualImportCandidates.isNotEmpty() &&
+                result.importedLocalNoteId == null) {
+                Text("Импорт недоступен: проверьте и закрепите историю либо " +
+                    "разберите существующие локальные привязки.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall)
+            }
         }
-        report?.importedLocalNoteId?.let { localId ->
-            Text(
-                "Markdown импортирован как новая заметка: " + localId +
-                    ". S3-синхронизация не включена.",
-                style = MaterialTheme.typography.bodySmall,
-            )
+        Surface(shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Text("S3 — внешний источник. Владелец сервера отдельно не " +
+                "подтверждён. Действие ручное, без удаления и перезаписи заметок.",
+                Modifier.fillMaxWidth().padding(12.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall)
         }
-        selected?.let { candidate ->
-            AlertDialog(
-                onDismissRequest = { selected = null },
-                title = { Text("Подтвердить импорт Markdown") },
-                text = {
-                    Text(
-                        "S3 не подтверждает личность владельца сервера. " +
-                            "Akula заново проверит всю историю и байты, затем " +
-                            "создаст только одну новую заметку без перезаписи. " +
-                            "Это ручной импорт, не синхронизация. Документ: " +
-                            candidate.documentId
-                    )
-                },
-                confirmButton = {
-                    TextButton(onClick = {
+    }
+
+    selected?.let { candidate ->
+        AlertDialog(
+            onDismissRequest = { if (!working) selected = null },
+            title = { Text("Получить одну заметку?") },
+            text = {
+                Text("Akula ещё раз проверит историю, ревизию и содержимое " +
+                    "Markdown (" + readableS3Bytes(candidate.bytes.toLong()) +
+                    "). Будет создана новая локальная заметка, без замены " +
+                    "существующих файлов. Владелец S3 не удостоверен.\n\n" +
+                    "Документ: " + candidate.documentId)
+            },
+            confirmButton = {
+                Button(
+                    enabled = enabled && !working &&
+                        (report?.canOfferManualImport() == true),
+                    onClick = {
                         selected = null
-                        working = true
-                        onWorkingChanged(true)
+                        markWorking(true)
                         report = null
-                        failure = null
+                        error = null
+                        notice = null
                         scope.launch {
                             try {
-                                val result = withContext(Dispatchers.IO) {
-                                    S3ReadOnlyProbe.run(
-                                        store, checkpoints, candidate
-                                    )
+                                val checked = withContext(Dispatchers.IO) {
+                                    S3ReadOnlyProbe.run(store, checkpoints, candidate)
                                 }
-                                report = result
-                                if (result.importedLocalNoteId != null) onImported()
+                                report = checked
+                                if (checked.importedLocalNoteId != null) onImported()
+                            } catch (_: S3ManualImport.ExistingSourceBinding) {
+                                error = "Эта заметка уже получена. Новая копия не создана."
+                            } catch (_: S3CheckpointProbe.CheckpointMismatch) {
+                                error = "История источника изменилась. Импорт отменён."
                             } catch (e: Exception) {
-                                failure = "Импорт отклонён: " +
-                                    (e.message ?: "проверьте источник и журнал")
+                                error = if (e.message?.contains("receive_needs_review") == true)
+                                    "Результат записи неопределён. Проверьте заметки " +
+                                        "и журнал; не повторяйте импорт автоматически."
+                                else "Импорт не завершён. Проверьте сеть и источник. " +
+                                    "Существующие заметки не перезаписывались."
                             } finally {
-                                working = false
-                                onWorkingChanged(false)
+                                markWorking(false)
                             }
                         }
-                    }) { Text("Импортировать одну заметку") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { selected = null }) { Text("Отмена") }
-                },
-            )
-        }
-        failure?.let {
-            Text(it, color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall)
-        }
+                    },
+                ) { Text("Импортировать") }
+            },
+            dismissButton = {
+                TextButton(onClick = { selected = null }, enabled = !working) {
+                    Text("Отмена")
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun S3Metric(value: String, label: String, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(value, style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(label, style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
     }
 }

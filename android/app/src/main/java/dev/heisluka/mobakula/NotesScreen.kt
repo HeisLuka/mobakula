@@ -166,6 +166,7 @@ fun NotesScreen(modifier: Modifier = Modifier, state: NotesViewModel = viewModel
                         exportId = id
                         exportPicker.launch("akula-" + id + ".md")
                     },
+                    onOpenNotes = { tab = "notes" },
                     modifier = Modifier.weight(1f),
                 )
                 else -> NotesOverview(
@@ -438,7 +439,7 @@ private fun NotesEditor(
 private fun NotesFiles(
     state: NotesViewModel,
     onImport: () -> Unit,
-    onExport: (String) -> Unit,
+    onExport: (String) -> Unit, onOpenNotes: () -> Unit,
     modifier: Modifier,
 ) {
     var selectExport by rememberSaveable { mutableStateOf(false) }
@@ -477,7 +478,7 @@ private fun NotesFiles(
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
-            S3InvitePreviewCard(onNoteImported = state::refresh)
+            S3InvitePreviewCard(onNoteImported = state::refresh, onOpenNotes = onOpenNotes)
         }
     }
 }

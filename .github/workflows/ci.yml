@@ -23,7 +23,7 @@ jobs:
   mobile-gate:
     name: mobile-gate
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.android_runtime && 40 || 20 }}
+    timeout-minutes: ${{ ((github.event_name == 'workflow_dispatch' && inputs.android_runtime) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'android-runtime-acceptance'))) && 40 || 20 }}
     steps:
       - name: Checkout with base history
         uses: actions/checkout@v4
@@ -119,14 +119,15 @@ jobs:
         run: |
           unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -F 'lib/arm64-v8a/libmobakula_mobile.so'
           unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -F 'lib/x86_64/libmobakula_mobile.so'
-      - name: Enable manually requested runtime smoke
+      - name: Enable explicitly opted-in Android runtime smoke
         if: steps.scope.outputs.android == 'true'
         id: runtime
         env:
           RUN_ANDROID_RUNTIME: ${{ inputs.android_runtime || 'false' }}
+          PR_RUNTIME_OPT_IN: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'android-runtime-acceptance') }}
         shell: bash
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$RUN_ANDROID_RUNTIME" == "true" ]]; then
+          if [[ ( "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$RUN_ANDROID_RUNTIME" == "true" ) || ( "$GITHUB_EVENT_NAME" == "pull_request" && "$PR_RUNTIME_OPT_IN" == "true" ) ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"

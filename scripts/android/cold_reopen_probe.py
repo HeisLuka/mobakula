@@ -16,7 +16,8 @@ APP = "dev.heisluka.mobakula"
 TEST_APP = APP + ".test"
 RUNNER = TEST_APP + "/androidx.test.runner.AndroidJUnitRunner"
 CLASS = APP + ".ColdReopenTwoProcessTest"
-SMOKE_CLASS = APP + ".NativeNotesRoundTripTest#roundTrip_andNoInternetPermission"
+SMOKE_CLASS = APP + ".NativeNotesRoundTripTest#roundTrip_andS3NetworkPermission"
+CLOUD_UI_CLASS = APP + ".S3CloudProviderUiTest#yandexTileOpensOverlayWithoutClaimingSynchronization"
 UI_CLASS = APP + ".UiNotesTwoProcessTest"
 
 
@@ -80,6 +81,11 @@ def main() -> int:
         stage("verify", "verifySavedFileFromGenuinelyNewAndroidProcess", "verified")
         print("PASS: previously saved bytes, BLAKE3 revision, list and stale-hash rejection survived a cold process restart")
         if args.include_ui:
+            run("shell", "am", "force-stop", APP, timeout=30)
+            cloud_ui = run("shell", "am", "instrument", "-w",
+                           "-e", "class", CLOUD_UI_CLASS, RUNNER, timeout=300)
+            verify_instrumentation(cloud_ui)
+            print("PASS: Compose S3 provider tile and Material 3 sheet", flush=True)
             for phase, method, receipt in (
                 ("prepare", "prepareNoteThroughUi", "ui_prepared"),
                 ("verify", "reopenNoteThroughUi", "ui_verified"),
