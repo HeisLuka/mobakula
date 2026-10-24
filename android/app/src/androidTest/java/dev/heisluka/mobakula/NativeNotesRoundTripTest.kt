@@ -12,7 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Actual Android runtime: S3 HTTPS permission and Kotlin -> JNI -> File Gate -> HistoryService. */
+/** Actual Android runtime: Kotlin -> JNI -> Akula File Gate -> HistoryService. */
 @RunWith(AndroidJUnit4::class)
 class NativeNotesRoundTripTest {
     private fun call(input: JSONObject): JSONObject =
@@ -25,10 +25,10 @@ class NativeNotesRoundTripTest {
     }
 
     @Test
-    fun roundTrip_andS3NetworkPermission() {
+    fun roundTrip_andNoInternetPermission() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         assertEquals(
-            PackageManager.PERMISSION_GRANTED,
+            PackageManager.PERMISSION_DENIED,
             context.checkSelfPermission(Manifest.permission.INTERNET),
         )
         val smokeRoot = File(context.noBackupFilesDir, "m1-native-smoke-vault")
