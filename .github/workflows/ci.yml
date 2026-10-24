@@ -75,6 +75,22 @@ jobs:
       - name: Test portable Rust API
         if: steps.scope.outputs.android == 'true'
         run: cargo test --manifest-path rust/Cargo.toml --workspace
+      - name: Prove disposable Core V1 Yandex fixture without S3 writes
+        if: steps.scope.outputs.android == 'true'
+        shell: bash
+        env:
+          AKULA_YANDEX_TEST_BUCKET: akula-e2e-ci-offline
+          AKULA_YANDEX_TEST_PREFIX: akula-e2e/ci
+          AKULA_YANDEX_TEST_ACCESS_KEY_ID: akula-test-key-123
+          AKULA_YANDEX_TEST_SECRET_ACCESS_KEY: fake-secret-for-offline-ci-123
+          AKULA_YANDEX_INVITE_PASSWORD: offline-test-password-longer-than-twenty
+        run: |
+          set -euo pipefail
+          TEST_TEMP="$(mktemp -d)"
+          trap 'rm -rf "${TEST_TEMP}"' EXIT
+          export AKULA_YANDEX_FIXTURE_OUTPUT="${TEST_TEMP}/fixture"
+          cargo run --quiet --manifest-path rust/Cargo.toml -p mobakula-mobile-api --example yandex_s3_fixture
+          python3 scripts/s3/publish_yandex_fixture.py "${AKULA_YANDEX_FIXTURE_OUTPUT}"
       - name: Build native Rust libraries
         if: steps.scope.outputs.android == 'true'
         shell: bash
