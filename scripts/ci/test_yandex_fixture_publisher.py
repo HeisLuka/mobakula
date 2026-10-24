@@ -2,6 +2,8 @@
 import hashlib
 import importlib.util
 import json
+import os
+from unittest.mock import patch
 from pathlib import Path
 import tempfile
 import unittest
@@ -88,6 +90,23 @@ class FixturePublisherTests(unittest.TestCase):
         self.save()
         with self.assertRaises(ValueError):
             tool.validate_fixture(self.directory)
+
+    def test_publisher_cannot_reuse_android_reader_credentials(self):
+        credentials = {
+            "AKULA_YANDEX_READ_ACCESS_KEY_ID": "android-read-only",
+            "AKULA_YANDEX_READ_SECRET_ACCESS_KEY": "private-reader-secret",
+            "AKULA_YANDEX_PUBLISH_ACCESS_KEY_ID": "android-read-only",
+            "AKULA_YANDEX_PUBLISH_SECRET_ACCESS_KEY": "private-publisher-secret",
+        }
+        with patch.dict(os.environ, credentials, clear=True):
+            with self.assertRaises(ValueError):
+                tool.aws_env()
+        credentials["AKULA_YANDEX_PUBLISH_ACCESS_KEY_ID"] = "publisher-write-only"
+        with patch.dict(os.environ, credentials, clear=True):
+            scoped = tool.aws_env()
+            self.assertEqual(scoped["AWS_ACCESS_KEY_ID"], "publisher-write-only")
+            self.assertNotIn("AKULA_YANDEX_READ_SECRET_ACCESS_KEY", scoped)
+            self.assertEqual(scoped["AWS_CONFIG_FILE"], os.devnull)
 
     def test_upload_requires_if_none_match_and_verifies_readback_before_head(self):
         bucket, checked = tool.validate_fixture(self.directory)

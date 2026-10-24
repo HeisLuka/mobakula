@@ -65,8 +65,12 @@ fn run() -> Result<(), String> {
     if !output.is_absolute() || output.exists() {
         return Err("output must be a fresh, absolute directory".into());
     }
-    let access_key_id = required("AKULA_YANDEX_TEST_ACCESS_KEY_ID")?;
-    let secret = Zeroizing::new(required("AKULA_YANDEX_TEST_SECRET_ACCESS_KEY")?);
+    let access_key_id = required("AKULA_YANDEX_READ_ACCESS_KEY_ID")?;
+    if env::var("AKULA_YANDEX_PUBLISH_ACCESS_KEY_ID").ok().as_deref()
+        == Some(access_key_id.as_str()) {
+        return Err("publisher and reader must use different access keys".into());
+    }
+    let secret = Zeroizing::new(required("AKULA_YANDEX_READ_SECRET_ACCESS_KEY")?);
     let password = Zeroizing::new(required("AKULA_YANDEX_INVITE_PASSWORD")?);
     let vault_id = VaultId::new();
     let ns = S3Keyspace::new(&prefix, vault_id)

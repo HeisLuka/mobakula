@@ -7,13 +7,18 @@ installed Android integration test. This does not enable automatic sync.
 
 ## Scope and credentials
 
-- Use a dedicated, empty akula-e2e-* test bucket with least-privilege
-  object-scoped S3 credentials. Never point this utility at production data.
+- Use a dedicated, empty akula-e2e-* test bucket with two distinct
+  identities: a READ-ONLY Android invitation key and a PUBLISH-only key
+  for uploading the disposable fixture. Scope both to test objects.
+  Never reuse the publisher key in the Android invitation; do not use production data.
 - Only the akula-e2e/ prefix is permitted. Each run creates a new Core
   VaultId, so a failed or interrupted test never replaces an old fixture.
 - Use environment variables AKULA_YANDEX_TEST_BUCKET,
-  AKULA_YANDEX_TEST_ACCESS_KEY_ID, AKULA_YANDEX_TEST_SECRET_ACCESS_KEY,
-  AKULA_YANDEX_INVITE_PASSWORD (20+ bytes), and
+  AKULA_YANDEX_READ_ACCESS_KEY_ID, AKULA_YANDEX_READ_SECRET_ACCESS_KEY
+  (Android invite, GET/HEAD only), and independent
+  AKULA_YANDEX_PUBLISH_ACCESS_KEY_ID, AKULA_YANDEX_PUBLISH_SECRET_ACCESS_KEY
+  (fixture publisher, PUT only). Supply AKULA_YANDEX_INVITE_PASSWORD
+  (20+ bytes) and
   AKULA_YANDEX_FIXTURE_OUTPUT (fresh, absolute path). Optional
   AKULA_YANDEX_TEST_PREFIX defaults to akula-e2e/manual.
 - DO NOT commit or upload the fixture directory, real .akula-sync encrypted
@@ -38,7 +43,8 @@ CI runs this exact local generator with FAKE test credentials.
 
 ## Explicit conditional publication (separate approval)
 
-With AWS CLI v2 installed and test variables set:
+With AWS CLI v2 installed, both distinct reader and publisher identities
+configured, and test variables set:
 
     python3 scripts/s3/publish_yandex_fixture.py "$AKULA_YANDEX_FIXTURE_OUTPUT" --publish
 

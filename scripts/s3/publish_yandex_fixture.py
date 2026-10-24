@@ -108,16 +108,25 @@ def is_uuid(text):
 
 def aws_env():
     source = {
-        "AWS_ACCESS_KEY_ID": os.environ.get("AKULA_YANDEX_TEST_ACCESS_KEY_ID", ""),
-        "AWS_SECRET_ACCESS_KEY": os.environ.get("AKULA_YANDEX_TEST_SECRET_ACCESS_KEY", ""),
+        "AWS_ACCESS_KEY_ID": os.environ.get("AKULA_YANDEX_PUBLISH_ACCESS_KEY_ID", ""),
+        "AWS_SECRET_ACCESS_KEY": os.environ.get("AKULA_YANDEX_PUBLISH_SECRET_ACCESS_KEY", ""),
     }
-    if not all(source.values()):
-        raise ValueError("missing dedicated Yandex test credentials")
+    reader_id = os.environ.get("AKULA_YANDEX_READ_ACCESS_KEY_ID", "")
+    if not all(source.values()) or not reader_id:
+        raise ValueError("missing separate Yandex reader/publisher test credentials")
+    if source["AWS_ACCESS_KEY_ID"] == reader_id:
+        raise ValueError("publisher must not reuse the Android reader key")
     env = dict(os.environ)
+    for name in ("AKULA_YANDEX_READ_ACCESS_KEY_ID", "AKULA_YANDEX_READ_SECRET_ACCESS_KEY",
+                 "AKULA_YANDEX_PUBLISH_ACCESS_KEY_ID",
+                 "AKULA_YANDEX_PUBLISH_SECRET_ACCESS_KEY"):
+        env.pop(name, None)
     env.update(source)
     env.update({
         "AWS_DEFAULT_REGION": "ru-central1", "AWS_REGION": "ru-central1",
         "AWS_EC2_METADATA_DISABLED": "true", "AWS_PAGER": "",
+        "AWS_CONFIG_FILE": os.devnull,
+        "AWS_SHARED_CREDENTIALS_FILE": os.devnull,
     })
     env.pop("AWS_SESSION_TOKEN", None)
     env.pop("AWS_PROFILE", None)

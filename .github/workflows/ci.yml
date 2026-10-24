@@ -81,8 +81,8 @@ jobs:
         env:
           AKULA_YANDEX_TEST_BUCKET: akula-e2e-ci-offline
           AKULA_YANDEX_TEST_PREFIX: akula-e2e/ci
-          AKULA_YANDEX_TEST_ACCESS_KEY_ID: akula-test-key-123
-          AKULA_YANDEX_TEST_SECRET_ACCESS_KEY: fake-secret-for-offline-ci-123
+          AKULA_YANDEX_READ_ACCESS_KEY_ID: akula-test-key-123
+          AKULA_YANDEX_READ_SECRET_ACCESS_KEY: fake-secret-for-offline-ci-123
           AKULA_YANDEX_INVITE_PASSWORD: offline-test-password-longer-than-twenty
         run: |
           set -euo pipefail
