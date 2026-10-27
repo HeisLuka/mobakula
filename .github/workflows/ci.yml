@@ -23,7 +23,7 @@ jobs:
   mobile-gate:
     name: mobile-gate
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' && inputs.android_runtime || github.event_name == 'pull_request' && github.event.pull_request.number == 53) && 40 || 20 }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.android_runtime && 40 || 20 }}
     steps:
       - name: Checkout with base history
         uses: actions/checkout@v4
@@ -107,10 +107,10 @@ jobs:
         if: steps.scope.outputs.android == 'true'
         id: runtime
         env:
-          RUN_ANDROID_RUNTIME: ${{ inputs.android_runtime || github.event.pull_request.number == 53 || 'false' }}
+          RUN_ANDROID_RUNTIME: ${{ inputs.android_runtime || 'false' }}
         shell: bash
         run: |
-          if [[ "$RUN_ANDROID_RUNTIME" == "true" && ( "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "$GITHUB_EVENT_NAME" == "pull_request" ) ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$RUN_ANDROID_RUNTIME" == "true" ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
