@@ -211,6 +211,11 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Also fence the ViewModel draft boundary, not only the Compose callback.
+    fun updateFromEditor(ownerNoteId: String, text: String, composing: Boolean) {
+        if (editorInputAccepted(ownerNoteId, opened?.id, busy)) update(text, composing)
+    }
+
     // Composition-only IME events must also reach this method. They can end a
     // composing session without changing the text, and should restart debounce.
     fun update(text: String, composing: Boolean = false) {
