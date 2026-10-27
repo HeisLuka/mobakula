@@ -312,6 +312,9 @@ private fun NotesEditor(
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val keyboardVisible = WindowInsets.isImeVisible
+    DisposableEffect(editorOwnerId, editorOwnerSession) {
+        onDispose { state.retireEditorSession(editorOwnerId, editorOwnerSession) }
+    }
     LaunchedEffect(state.opened?.id) { state.onEditorRecreated(editorOwnerId) }
     LaunchedEffect(state.draft) {
         // File Gate may normalize a saved text or Discard may restore content.
