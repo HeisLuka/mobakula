@@ -299,6 +299,8 @@ private fun NotesEditor(
     onExport: () -> Unit,
     modifier: Modifier,
 ) {
+    // A late IME event from a previously opened note may not edit a new note.
+    val editorOwnerId = state.opened?.id ?: return
     // TextFieldValue owns cursor, selection and IME composition; the ViewModel
     // remains the only source for persisted content and autosave decisions.
     var editor by rememberSaveable(state.opened?.id, stateSaver = TextFieldValue.Saver) {
@@ -328,22 +330,23 @@ private fun NotesEditor(
     }
 
     fun format(command: MarkdownCommand) {
-        if (state.busy || state.imeComposing) return
+        if (!editorInputAccepted(editorOwnerId, state.opened?.id, state.busy) || state.imeComposing) return
         val updated = applyMarkdownCommand(editor, command)
         if (updated.text != editor.text) editHistory.record(editor, updated)
         editor = updated
         if (updated.text != state.draft || (updated.composition != null) != state.imeComposing) {
-            state.update(updated.text, composing = updated.composition != null)
+            state.updateFromEditor(editorOwnerId, updated.text, composing = updated.composition != null)
         }
         focusRequester.requestFocus()
         keyboardController?.show()
     }
 
     fun restore(value: TextFieldValue?) {
-        if (state.busy || state.imeComposing || value == null) return
+        if (!editorInputAccepted(editorOwnerId, state.opened?.id, state.busy) ||
+            state.imeComposing || value == null) return
         editor = value
         if (value.text != state.draft || (value.composition != null) != state.imeComposing) {
-            state.update(value.text, composing = value.composition != null)
+            state.updateFromEditor(editorOwnerId, value.text, composing = value.composition != null)
         }
         focusRequester.requestFocus()
         keyboardController?.show()
@@ -373,13 +376,13 @@ private fun NotesEditor(
             value = editor,
             onValueChange = { next ->
                 // Ignore a late IME callback while File Gate is saving.
-                if (!state.busy) {
+                if (editorInputAccepted(editorOwnerId, state.opened?.id, state.busy)) {
                     if (next.text != editor.text) editHistory.record(editor, next)
                     editor = next
                     if (next.text != state.draft ||
                         (next.composition != null) != state.imeComposing
                     ) {
-                        state.update(next.text, composing = next.composition != null)
+                        state.updateFromEditor(editorOwnerId, next.text, composing = next.composition != null)
                     }
                 }
             },
