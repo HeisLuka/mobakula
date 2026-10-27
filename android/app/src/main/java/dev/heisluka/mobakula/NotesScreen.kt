@@ -299,7 +299,6 @@ private fun NotesEditor(
     onExport: () -> Unit,
     modifier: Modifier,
 ) {
-    // A late IME event from a previously opened note may not edit a new note.
     val editorOwnerId = state.opened?.id ?: return
     val editorOwnerSession = state.editorSession
     // TextFieldValue owns cursor, selection and IME composition; the ViewModel
@@ -307,7 +306,6 @@ private fun NotesEditor(
     var editor by rememberSaveable(state.opened?.id, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(state.draft))
     }
-    // One bounded undo history per opened note. Rust HistoryService remains durable.
     val editHistory = remember(state.opened?.id) { DraftEditHistory() }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -332,7 +330,6 @@ private fun NotesEditor(
             )
         }
     }
-
     fun format(command: MarkdownCommand) {
         if (!editorInputAccepted(editorOwnerId, editorOwnerSession, state.opened?.id, state.editorSession, state.busy) || state.imeComposing) return
         val updated = applyMarkdownCommand(editor, command)
@@ -344,7 +341,6 @@ private fun NotesEditor(
         focusRequester.requestFocus()
         keyboardController?.show()
     }
-
     fun restore(value: TextFieldValue?) {
         if (!editorInputAccepted(editorOwnerId, editorOwnerSession, state.opened?.id, state.editorSession, state.busy) ||
             state.imeComposing || value == null) return
@@ -355,7 +351,6 @@ private fun NotesEditor(
         focusRequester.requestFocus()
         keyboardController?.show()
     }
-
     val title = state.draft.lineSequence().firstOrNull()
         ?.trimStart('#', ' ')?.take(65)?.ifBlank { "Новая заметка" } ?: "Новая заметка"
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
