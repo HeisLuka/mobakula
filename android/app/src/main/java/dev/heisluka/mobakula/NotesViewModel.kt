@@ -42,6 +42,9 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
     private var preservedRecoveryId: String? = null
     var imeComposing by mutableStateOf(false)
         private set
+    // Monotonic per-editor generation; reopening the same note starts a new session.
+    var editorSession by mutableStateOf(0L)
+        private set
 
     val dirty: Boolean get() = opened?.content != draft && opened != null
     val saveStatus: String get() = when {
@@ -91,6 +94,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
                         val recovered = runCatching { repository.read(affected) }.getOrNull()
                         if (recovered != null) {
                             opened = recovered
+                            editorSession++
                             draft = recovered.content
                         }
                     }
@@ -121,6 +125,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         preventDuplicateCreate()
         val created = repository.create()
         opened = created
+        editorSession++
         draft = created.content
         imeComposing = false
         saveEvidence = NoteSaveEvidence.VERIFIED
@@ -143,6 +148,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         draftCheckpointReady = false
         val note = repository.read(id)
         opened = note
+        editorSession++
         draft = note.content
         imeComposing = false
         saveEvidence = if (id in unresolvedHistoryNotes) {
@@ -182,6 +188,7 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         preventDuplicateCreate()
         val created = repository.importFile(uri)
         opened = created
+        editorSession++
         draft = created.content
         imeComposing = false
         saveEvidence = NoteSaveEvidence.VERIFIED
@@ -211,6 +218,13 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Also fence the ViewModel draft boundary, not only the Compose callback.
+    fun updateFromEditor(ownerNoteId: String, ownerSession: Long, text: String, composing: Boolean) {
+        if (editorInputAccepted(ownerNoteId, ownerSession, opened?.id, editorSession, busy)) {
+            update(text, composing)
+        }
+    }
+
     // Composition-only IME events must also reach this method. They can end a
     // composing session without changing the text, and should restart debounce.
     fun update(text: String, composing: Boolean = false) {
@@ -233,7 +247,15 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
 
     // TextFieldValue's composing region is not durable across editor recreation
     // (such as rotation). Do not leave the preserved ViewModel permanently blocked.
-    fun onEditorRecreated() {
+    // Dispose retires the old editor *before* another composition is created.
+    // Never advance the session from a first-frame LaunchedEffect: an IME event
+    // queued for that first frame would otherwise be mistaken for a stale event.
+    fun retireEditorSession(ownerNoteId: String, ownerSession: Long) {
+        if (opened?.id == ownerNoteId && editorSession == ownerSession) editorSession++
+    }
+
+    fun onEditorRecreated(ownerNoteId: String) {
+        if (opened?.id != ownerNoteId) return
         if (!imeComposing) return
         imeComposing = false
         autoSave.cancel()

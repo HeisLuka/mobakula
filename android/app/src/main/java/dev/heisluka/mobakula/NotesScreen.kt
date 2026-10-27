@@ -299,17 +299,21 @@ private fun NotesEditor(
     onExport: () -> Unit,
     modifier: Modifier,
 ) {
+    val editorOwnerId = state.opened?.id ?: return
+    val editorOwnerSession = state.editorSession
     // TextFieldValue owns cursor, selection and IME composition; the ViewModel
     // remains the only source for persisted content and autosave decisions.
     var editor by rememberSaveable(state.opened?.id, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(state.draft))
     }
-    // One bounded undo history per opened note. Rust HistoryService remains durable.
     val editHistory = remember(state.opened?.id) { DraftEditHistory() }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val keyboardVisible = WindowInsets.isImeVisible
-    LaunchedEffect(state.opened?.id) { state.onEditorRecreated() }
+    DisposableEffect(editorOwnerId, editorOwnerSession) {
+        onDispose { state.retireEditorSession(editorOwnerId, editorOwnerSession) }
+    }
+    LaunchedEffect(state.opened?.id) { state.onEditorRecreated(editorOwnerId) }
     LaunchedEffect(state.draft) {
         // File Gate may normalize a saved text or Discard may restore content.
         // Do not reset the current caret on a selection-only IME event.
@@ -326,29 +330,27 @@ private fun NotesEditor(
             )
         }
     }
-
     fun format(command: MarkdownCommand) {
-        if (state.busy || state.imeComposing) return
+        if (!editorInputAccepted(editorOwnerId, editorOwnerSession, state.opened?.id, state.editorSession, state.busy) || state.imeComposing) return
         val updated = applyMarkdownCommand(editor, command)
         if (updated.text != editor.text) editHistory.record(editor, updated)
         editor = updated
         if (updated.text != state.draft || (updated.composition != null) != state.imeComposing) {
-            state.update(updated.text, composing = updated.composition != null)
+            state.updateFromEditor(editorOwnerId, editorOwnerSession, updated.text, composing = updated.composition != null)
         }
         focusRequester.requestFocus()
         keyboardController?.show()
     }
-
     fun restore(value: TextFieldValue?) {
-        if (state.busy || state.imeComposing || value == null) return
+        if (!editorInputAccepted(editorOwnerId, editorOwnerSession, state.opened?.id, state.editorSession, state.busy) ||
+            state.imeComposing || value == null) return
         editor = value
         if (value.text != state.draft || (value.composition != null) != state.imeComposing) {
-            state.update(value.text, composing = value.composition != null)
+            state.updateFromEditor(editorOwnerId, editorOwnerSession, value.text, composing = value.composition != null)
         }
         focusRequester.requestFocus()
         keyboardController?.show()
     }
-
     val title = state.draft.lineSequence().firstOrNull()
         ?.trimStart('#', ' ')?.take(65)?.ifBlank { "Новая заметка" } ?: "Новая заметка"
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -373,13 +375,13 @@ private fun NotesEditor(
             value = editor,
             onValueChange = { next ->
                 // Ignore a late IME callback while File Gate is saving.
-                if (!state.busy) {
+                if (editorInputAccepted(editorOwnerId, editorOwnerSession, state.opened?.id, state.editorSession, state.busy)) {
                     if (next.text != editor.text) editHistory.record(editor, next)
                     editor = next
                     if (next.text != state.draft ||
                         (next.composition != null) != state.imeComposing
                     ) {
-                        state.update(next.text, composing = next.composition != null)
+                        state.updateFromEditor(editorOwnerId, editorOwnerSession, next.text, composing = next.composition != null)
                     }
                 }
             },
