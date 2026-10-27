@@ -247,10 +247,15 @@ class NotesViewModel(application: Application) : AndroidViewModel(application) {
 
     // TextFieldValue's composing region is not durable across editor recreation
     // (such as rotation). Do not leave the preserved ViewModel permanently blocked.
+    // Dispose retires the old editor *before* another composition is created.
+    // Never advance the session from a first-frame LaunchedEffect: an IME event
+    // queued for that first frame would otherwise be mistaken for a stale event.
+    fun retireEditorSession(ownerNoteId: String, ownerSession: Long) {
+        if (opened?.id == ownerNoteId && editorSession == ownerSession) editorSession++
+    }
+
     fun onEditorRecreated(ownerNoteId: String) {
         if (opened?.id != ownerNoteId) return
-        // Retire callbacks from the destroyed Activity, even for the same note.
-        editorSession++
         if (!imeComposing) return
         imeComposing = false
         autoSave.cancel()
