@@ -301,6 +301,7 @@ private fun NotesEditor(
 ) {
     // A late IME event from a previously opened note may not edit a new note.
     val editorOwnerId = state.opened?.id ?: return
+    val editorOwnerSession = state.editorSession
     // TextFieldValue owns cursor, selection and IME composition; the ViewModel
     // remains the only source for persisted content and autosave decisions.
     var editor by rememberSaveable(state.opened?.id, stateSaver = TextFieldValue.Saver) {
@@ -311,7 +312,7 @@ private fun NotesEditor(
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val keyboardVisible = WindowInsets.isImeVisible
-    LaunchedEffect(state.opened?.id) { state.onEditorRecreated() }
+    LaunchedEffect(state.opened?.id) { state.onEditorRecreated(editorOwnerId) }
     LaunchedEffect(state.draft) {
         // File Gate may normalize a saved text or Discard may restore content.
         // Do not reset the current caret on a selection-only IME event.
@@ -330,23 +331,23 @@ private fun NotesEditor(
     }
 
     fun format(command: MarkdownCommand) {
-        if (!editorInputAccepted(editorOwnerId, state.opened?.id, state.busy) || state.imeComposing) return
+        if (!editorInputAccepted(editorOwnerId, editorOwnerSession, state.opened?.id, state.editorSession, state.busy) || state.imeComposing) return
         val updated = applyMarkdownCommand(editor, command)
         if (updated.text != editor.text) editHistory.record(editor, updated)
         editor = updated
         if (updated.text != state.draft || (updated.composition != null) != state.imeComposing) {
-            state.updateFromEditor(editorOwnerId, updated.text, composing = updated.composition != null)
+            state.updateFromEditor(editorOwnerId, editorOwnerSession, updated.text, composing = updated.composition != null)
         }
         focusRequester.requestFocus()
         keyboardController?.show()
     }
 
     fun restore(value: TextFieldValue?) {
-        if (!editorInputAccepted(editorOwnerId, state.opened?.id, state.busy) ||
+        if (!editorInputAccepted(editorOwnerId, editorOwnerSession, state.opened?.id, state.editorSession, state.busy) ||
             state.imeComposing || value == null) return
         editor = value
         if (value.text != state.draft || (value.composition != null) != state.imeComposing) {
-            state.updateFromEditor(editorOwnerId, value.text, composing = value.composition != null)
+            state.updateFromEditor(editorOwnerId, editorOwnerSession, value.text, composing = value.composition != null)
         }
         focusRequester.requestFocus()
         keyboardController?.show()
@@ -376,13 +377,13 @@ private fun NotesEditor(
             value = editor,
             onValueChange = { next ->
                 // Ignore a late IME callback while File Gate is saving.
-                if (editorInputAccepted(editorOwnerId, state.opened?.id, state.busy)) {
+                if (editorInputAccepted(editorOwnerId, editorOwnerSession, state.opened?.id, state.editorSession, state.busy)) {
                     if (next.text != editor.text) editHistory.record(editor, next)
                     editor = next
                     if (next.text != state.draft ||
                         (next.composition != null) != state.imeComposing
                     ) {
-                        state.updateFromEditor(editorOwnerId, next.text, composing = next.composition != null)
+                        state.updateFromEditor(editorOwnerId, editorOwnerSession, next.text, composing = next.composition != null)
                     }
                 }
             },
