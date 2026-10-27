@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -216,6 +217,51 @@ class UiNotesTwoProcessTest {
         compose.onNodeWithTag("note_back").performClick()
         awaitTitle(title)
         report("ui_recreated")
+    }
+
+    /**
+     * Compose semantics incremental input, not an OS IME composition event.
+     * A previously saved note must retain every existing character after the
+     * first new typed character, and File Gate must persist the exact result.
+     */
+    @Test
+    fun firstTypedCharacterKeepsPreviouslySavedText() {
+        requirePhase("first_input")
+        val title = "First input " + UUID.randomUUID().toString().take(8)
+        val original = "# " + title + "\nСохранённый текст: 你好, э🙂\n"
+
+        awaitTag("note_create")
+        compose.onNodeWithTag("note_create").performClick()
+        awaitTag("note_editor")
+        compose.onNodeWithTag("note_editor").performTextReplacement(original)
+        compose.onNodeWithTag("note_save").assertIsEnabled().performClick()
+        compose.waitUntil(timeoutMillis = 30_000) {
+            compose.onAllNodesWithText("Файл и история проверены")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("note_back").performClick()
+        awaitTitle(title)
+        compose.onNodeWithText(title).performClick()
+        awaitTag("note_editor")
+
+        fun editable(): String = compose.onNodeWithTag("note_editor")
+            .fetchSemanticsNode().config[SemanticsProperties.EditableText].text
+        assertEquals("Reopening changed the saved text before typing", original, editable())
+        compose.onNodeWithTag("note_editor").performClick()
+        compose.onNodeWithTag("note_editor").performTextInput("!")
+        compose.waitUntil(timeoutMillis = 15_000) {
+            val value = editable()
+            value.length == original.length + 1 && value.replaceFirst("!", "") == original
+        }
+        val expected = editable()
+        val state = ViewModelProvider(compose.activity)[NotesViewModel::class.java]
+        compose.waitUntil(timeoutMillis = 30_000) { !state.dirty && !state.busy }
+        compose.onNodeWithTag("note_back").performClick()
+        awaitTitle(title)
+        compose.onNodeWithText(title).performClick()
+        awaitTag("note_editor")
+        assertEquals("The first typed character was not saved exactly", expected, editable())
+        report("ui_first_input_preserved")
     }
 
     @Test
