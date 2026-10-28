@@ -83,6 +83,7 @@ def main() -> int:
             for phase, method, receipt in (
                 ("prepare", "prepareNoteThroughUi", "ui_prepared"),
                 ("verify", "reopenNoteThroughUi", "ui_verified"),
+                ("first_input", "firstTypedCharacterKeepsPreviouslySavedText", "ui_first_input_preserved"),
                 ("recreate", "recreateActivityRetainsPendingDraftAndResumesAutoSave", "ui_recreated"),
                 ("recovery_prepare", "prepareUnsavedDraftForColdRecovery", "ui_recovery_prepared"),
                 ("recovery_verify", "recoverDraftInNewProcessWithoutOverwritingFile", "ui_recovery_verified"),
